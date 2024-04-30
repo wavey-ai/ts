@@ -1,0 +1,17 @@
+[package]
+name = "ts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.82"
+bytes = "1.6.0"
+futures = "0.3.30"
+au = { git = "https://github.com/wavey-ai/au.git" }
+srt = { git = "https://github.com/wavey-ai/av-rs.git", features = ["async"] }
+h264 = { git = "https://github.com/wavey-ai/av-rs.git" }
+mpeg2 = { git = "https://github.com/wavey-ai/av-rs.git" }
+tokio-stream = "0.1.15"
+tokio = { version = "1.37.0", features = ["sync"] }
+byteorder = "1.5.0"
+chrono = "0.4.38"

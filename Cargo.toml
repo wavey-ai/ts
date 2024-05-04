@@ -11,6 +11,7 @@ au = { git = "https://github.com/wavey-ai/au.git" }
 srt = { git = "https://github.com/wavey-ai/av-rs.git", features = ["async"] }
 h264 = { git = "https://github.com/wavey-ai/av-rs.git" }
 mpeg2 = { git = "https://github.com/wavey-ai/av-rs.git" }
+xmpegts = { git = "https://github.com/wavey-ai/xiu" }
 tokio-stream = "0.1.15"
 tokio = { version = "1.37.0", features = ["sync"] }
 byteorder = "1.5.0"

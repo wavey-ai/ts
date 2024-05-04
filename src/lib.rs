@@ -1,5 +1,5 @@
 mod demuxer;
-mod muxer;
+pub mod muxer;
 
 use crate::demuxer::{demux, DemuxOutput};
 use au::{

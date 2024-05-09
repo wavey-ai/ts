@@ -102,7 +102,7 @@ fn chunk_bytes_mut(data: &bytes::BytesMut, chunk_size: usize) -> Vec<bytes::Byte
     chunks
 }
 
-fn lp_to_nal_start_code(flv_data: &[u8]) -> Vec<u8> {
+pub fn lp_to_nal_start_code(flv_data: &[u8]) -> Vec<u8> {
     let mut nal_units = Vec::new();
     let mut offset = 0;
 

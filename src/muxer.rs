@@ -22,7 +22,7 @@ pub async fn mux_stream(
         let pts = au.pts();
         let dts = au.dts();
 
-        if let Some(data) = au.data {
+        if let Some(data) = &au.data {
             let mut flags: u16 = 0;
 
             if au.key {
@@ -31,15 +31,7 @@ pub async fn mux_stream(
 
             match au.kind {
                 AuKind::AAC => {
-                    let mut payload = bytes::BytesMut::from_iter(&data);
-
-                    if extract_aac_data(&data).is_none() {
-                        if let (Some(chans), Some(sr)) = (au.audio_channels, au.audio_sample_rate) {
-                            let mut adts = create_adts_header(0x66, chans, sr, data.len(), false);
-                            adts.extend_from_slice(&data);
-                            payload = bytes::BytesMut::from_iter(&adts);
-                        }
-                    }
+                    let payload = ensure_adts_header(&au);
 
                     match ts_muxer.write(audio_pid, dts * 90, dts * 90, flags, payload) {
                         Ok(_) => {}
@@ -50,7 +42,7 @@ pub async fn mux_stream(
                 }
                 AuKind::AVC => {
                     let mut payload = if has_annex_b_prefix(&data) {
-                        bytes::BytesMut::from_iter(&data)
+                        bytes::BytesMut::from_iter(data)
                     } else {
                         bytes::BytesMut::from_iter(lp_to_nal_start_code(&data).iter().cloned())
                     };
@@ -84,6 +76,34 @@ pub async fn mux_stream(
     }
 
     Ok(())
+}
+
+fn ensure_adts_header(au: &AuPayload) -> BytesMut {
+    if let Some(data) = &au.data {
+        // Assume that the first byte might contain the ASC if `extract_aac_data` finds no ADTS header
+        if extract_aac_data(data).is_none() {
+            // Assuming data[0] is present and is the first byte of ASC
+            if let (Some(channels), Some(sample_rate)) = (au.audio_channels, au.audio_sample_rate) {
+                // Parse the profile from the ASC
+                let audio_object_type = data[0] >> 3; // First 5 bits contain the audio object type
+                let profile = match audio_object_type {
+                    1 => 0x66, // AAC-LC
+                    2 => 0x67, // HE-AAC v1
+                    5 => 0x68, // HE-AAC v2
+                    _ => 0x66, // Default to AAC-LC if unknown
+                };
+
+                let header =
+                    create_adts_header(profile, channels, sample_rate, data.len() - 2, false);
+                let mut payload = BytesMut::from(&header[..]);
+                payload.extend_from_slice(&data[2..]); // Skip the first two bytes if they are part of ASC
+
+                return payload;
+            }
+        }
+        return BytesMut::from_iter(data);
+    }
+    BytesMut::new()
 }
 
 fn chunk_bytes_mut(data: &bytes::BytesMut, chunk_size: usize) -> Vec<bytes::BytesMut> {
@@ -140,7 +160,7 @@ fn create_adts_header(
     has_crc: bool,
 ) -> Vec<u8> {
     let profile_object_type = match codec_id {
-        0x66 => 1, // AAC LC
+        0x66 => 1, // AAC LC (internally set as `1`, should directly be `01` in bits)
         0x67 => 2, // AAC HEV1
         0x68 => 3, // AAC HEV2
         _ => 1,    // Default to AAC LC
@@ -148,13 +168,8 @@ fn create_adts_header(
 
     let sample_rate_index = sample_rate_index(sample_rate);
     let channel_config = channels.min(7);
-
     let header_length = if has_crc { 9 } else { 7 };
     let frame_length = aac_frame_length + header_length;
-
-    if frame_length >= 1 << 13 {
-        panic!("Frame length exceeds ADTS limit");
-    }
 
     let mut header = Vec::with_capacity(header_length);
     let protection_absent = if has_crc { 0 } else { 1 };
@@ -162,24 +177,20 @@ fn create_adts_header(
     header.push(0xFF);
     header.push(0xF0 | protection_absent);
 
-    // Fix for mixing types in bitwise operations: Ensure all operations are on the same type, and correctly cast frame_length to u8 where necessary
     let profile_and_sampling =
-        ((profile_object_type - 1) << 6) | (sample_rate_index << 2) | (channel_config >> 2);
-    header.push(profile_and_sampling as u8);
+        (profile_object_type << 6) | (sample_rate_index << 2) | (channel_config >> 2);
+    header.push(profile_and_sampling);
 
-    // Correct handling for frame_length being a usize
     let frame_length_high = ((frame_length >> 11) & 0x03) as u8;
     let frame_length_mid = ((frame_length >> 3) & 0xFF) as u8;
     header.push((channel_config & 3) << 6 | frame_length_high);
     header.push(frame_length_mid);
 
-    // Correct casting and operations for the last part of the frame length and buffer fullness
     let frame_length_low = ((frame_length & 0x07) << 5) | 0x1F;
     header.push(frame_length_low as u8);
     header.push(0xFC);
 
     if has_crc {
-        // Placeholder for CRC
         header.extend_from_slice(&[0x00, 0x00]);
     }
 
@@ -232,4 +243,29 @@ fn extract_aac_data(sound_data: &[u8]) -> Option<&[u8]> {
     }
 
     Some(&sound_data[header_size..frame_length])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mse_fmp4::aac::{AdtsHeader, ChannelConfiguration, SamplingFrequency};
+
+    #[test]
+    fn test_adts_header_parsing() {
+        let data = vec![0u8; 200]; // Dummy AAC frame data
+        let channels = 2u8;
+        let sample_rate = 44100u32;
+        let adts_payload = create_adts_header(0x66, channels, sample_rate, data.len(), false);
+        let mut full_payload = adts_payload.clone();
+        full_payload.extend_from_slice(&data);
+
+        let adts = AdtsHeader::read_from(&full_payload[..]).unwrap();
+        assert_eq!(adts.frame_len, 207);
+        assert_eq!(adts.sampling_frequency, SamplingFrequency::Hz44100);
+        assert_eq!(
+            adts.channel_configuration,
+            ChannelConfiguration::TwoChannels
+        );
+        assert_eq!(adts.profile, mse_fmp4::aac::AacProfile::Lc);
+    }
 }

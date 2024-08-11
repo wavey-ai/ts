@@ -1,5 +1,7 @@
+use crate::boxer::{box_fmp4, ticks_to_ms};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
+use h264::{Bitstream, Decode, NALUnit, SequenceParameterSet};
 use mpeg2ts_reader::packet;
 use mpeg2ts_reader::pes;
 use mpeg2ts_reader::psi;
@@ -7,26 +9,23 @@ use mpeg2ts_reader::{
     demultiplex::{self, FilterChangeset},
     StreamType,
 };
+use mse_fmp4::avc::AvcDecoderConfigurationRecord;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{debug, error, info};
 
 #[derive(Debug, Clone)]
 pub struct AccessUnit {
-    pub avc: bool,
     pub key: bool,
     pub pts: u64,
     pub dts: u64,
-    pub seq: u64,
-    pub sps: Option<Bytes>,
-    pub pps: Option<Bytes>,
     pub data: Bytes,
 }
 
-pub fn new_demuxer() -> (Sender<Bytes>, Receiver<AccessUnit>) {
+pub fn new_demuxer(min_part_ms: u32) -> Sender<Bytes> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(32);
-    let (out_tx, out_rx) = tokio::sync::mpsc::channel::<AccessUnit>(32);
 
     tokio::spawn(async move {
-        let mut ctx = DumpDemuxContext::new(out_tx);
+        let mut ctx = DumpDemuxContext::new(min_part_ms);
         let mut demux = demultiplex::Demultiplex::new(&mut ctx);
 
         while let Some(data) = rx.recv().await {
@@ -34,20 +33,20 @@ pub fn new_demuxer() -> (Sender<Bytes>, Receiver<AccessUnit>) {
         }
     });
 
-    return (tx, out_rx);
+    tx
 }
 
 pub struct DumpDemuxContext {
     changeset: FilterChangeset<DumpFilterSwitch>,
-    sender: Sender<AccessUnit>,
+    min_part_ms: u32,
 }
 
 // Implement the constructor for the custom context
 impl DumpDemuxContext {
-    fn new(sender: Sender<AccessUnit>) -> Self {
+    fn new(min_part_ms: u32) -> Self {
         DumpDemuxContext {
             changeset: FilterChangeset::default(),
-            sender,
+            min_part_ms,
         }
     }
 
@@ -72,7 +71,7 @@ impl DumpDemuxContext {
                 StreamType::ADTS,
                 pmt,
                 stream_info,
-                self.sender.clone(),
+                self.min_part_ms,
             ),
             demultiplex::FilterRequest::ByStream {
                 stream_type: StreamType::H264,
@@ -83,7 +82,7 @@ impl DumpDemuxContext {
                 StreamType::H264,
                 pmt,
                 stream_info,
-                self.sender.clone(),
+                self.min_part_ms,
             ),
             demultiplex::FilterRequest::ByStream { .. } => {
                 DumpFilterSwitch::Null(demultiplex::NullPacketFilter::default())
@@ -132,7 +131,15 @@ struct PtsDumpElementaryStreamConsumer {
     dts: u64,
     pps: Option<Bytes>,
     sps: Option<Bytes>,
-    sender: Sender<AccessUnit>,
+    avc_buf: Vec<AccessUnit>,
+    aac_buf: Vec<AccessUnit>,
+    avc_timestamps: Vec<u64>,
+    seg_seq: u32,
+    width: u16,
+    height: u16,
+    fps: f64,
+    avcc: Option<AvcDecoderConfigurationRecord>,
+    min_part_ms: u32,
 }
 
 impl PtsDumpElementaryStreamConsumer {
@@ -140,7 +147,7 @@ impl PtsDumpElementaryStreamConsumer {
         stream_type: StreamType,
         _pmt_sect: &psi::pmt::PmtSection,
         stream_info: &psi::pmt::StreamInfo,
-        sender: Sender<AccessUnit>,
+        min_part_ms: u32,
     ) -> DumpFilterSwitch {
         let filter = pes::PesPacketFilter::new(PtsDumpElementaryStreamConsumer {
             pid: stream_info.elementary_pid(),
@@ -153,7 +160,15 @@ impl PtsDumpElementaryStreamConsumer {
             dts: 0,
             sps: None,
             pps: None,
-            sender,
+            avc_buf: Vec::new(),
+            aac_buf: Vec::new(),
+            avc_timestamps: Vec::new(),
+            seg_seq: 1,
+            width: 0,
+            height: 0,
+            fps: 0.0,
+            avcc: None,
+            min_part_ms,
         });
         DumpFilterSwitch::Pes(filter)
     }
@@ -168,6 +183,7 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
                 match parsed.pts_dts() {
                     Ok(pes::PtsDts::PtsOnly(Ok(pts))) => {
                         self.pts = pts.value();
+                        self.dts = pts.value();
                     }
                     Ok(pes::PtsDts::Both {
                         pts: Ok(pts),
@@ -248,17 +264,92 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
 
                         let data_slice: &[u8] = &self.accumulated_payload;
                         let au = AccessUnit {
-                            avc: true,
                             key: is_keyframe,
-                            seq: self.seq,
+                            data: Bytes::from(data_slice.to_vec()),
                             pts: self.pts,
                             dts: self.dts,
-                            pps: self.pps.take(),
-                            sps: self.sps.take(),
-                            data: Bytes::from(data_slice.to_vec()),
                         };
-                        let _ = self.sender.try_send(au);
 
+                        if self.avcc.is_none() {
+                            if let Some(sps_b) = &self.sps {
+                                if let Some(pps_b) = &self.pps {
+                                    let bs = Bitstream::new(sps_b.iter().copied());
+                                    match NALUnit::decode(bs) {
+                                        Ok(mut nalu) => {
+                                            let mut rbsp = Bitstream::new(&mut nalu.rbsp_byte);
+                                            if let Ok(sps) = SequenceParameterSet::decode(&mut rbsp)
+                                            {
+                                                self.width = (sps.pic_width_in_samples()
+                                                    - (sps.frame_crop_right_offset.0 * 2)
+                                                    - (sps.frame_crop_left_offset.0 * 2))
+                                                    as u16;
+                                                self.height = ((sps.frame_height_in_mbs() * 16)
+                                                    - (sps.frame_crop_bottom_offset.0 * 2)
+                                                    - (sps.frame_crop_top_offset.0 * 2))
+                                                    as u16;
+                                                if sps.vui_parameters_present_flag.0 != 0
+                                                    && sps.vui_parameters.timing_info_present_flag.0
+                                                        != 0
+                                                {
+                                                    self.fps = sps.vui_parameters.time_scale.0
+                                                        as f64
+                                                        / sps.vui_parameters.num_units_in_tick.0
+                                                            as f64;
+                                                }
+
+                                                self.avcc = Some(AvcDecoderConfigurationRecord {
+                                                    profile_idc: sps.profile_idc.0,
+                                                    constraint_set_flag: sps.constraint_set0_flag.0,
+                                                    level_idc: sps.level_idc.0,
+                                                    sequence_parameter_set: sps_b.clone(),
+                                                    picture_parameter_set: pps_b.clone(),
+                                                })
+                                            };
+                                        }
+                                        Err(e) => {
+                                            dbg!(e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if self.avc_timestamps.len() > 1 {
+                            let elapsed_ms = ticks_to_ms(
+                                self.avc_timestamps[self.avc_timestamps.len() - 1]
+                                    - self.avc_timestamps[0],
+                            ) as u32;
+
+                            if elapsed_ms >= self.min_part_ms || is_keyframe {
+                                let mut avc = Vec::new();
+                                let mut aac = Vec::new();
+                                for a in &self.avc_buf {
+                                    avc.push(a.clone());
+                                }
+                                for a in &self.aac_buf {
+                                    aac.push(a.clone());
+                                }
+
+                                let fmp4 = box_fmp4(
+                                    self.seg_seq,
+                                    self.avcc.as_ref(),
+                                    avc,
+                                    aac,
+                                    self.dts,
+                                    self.width,
+                                    self.height,
+                                );
+
+                                dbg!(fmp4.duration);
+                                self.seg_seq += 1;
+                                self.avc_buf.clear();
+                                self.aac_buf.clear();
+                                self.avc_timestamps.clear();
+                            }
+                        }
+
+                        self.avc_timestamps.push(self.dts);
+                        self.avc_buf.push(au);
                         self.seq += 1;
                     }
                 }
@@ -270,16 +361,14 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
             StreamType::ADTS => {
                 let data_slice: &[u8] = &self.accumulated_payload;
                 let au = AccessUnit {
-                    avc: false,
                     key: false,
-                    seq: self.seq,
                     pts: self.pts,
                     dts: self.dts,
-                    sps: None,
-                    pps: None,
                     data: Bytes::from(data_slice.to_vec()),
                 };
-                let _ = self.sender.try_send(au);
+
+                self.aac_buf.push(au);
+
                 self.accumulated_payload.clear();
                 self.seq += 1;
             }

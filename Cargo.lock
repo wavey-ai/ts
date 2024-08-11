@@ -61,7 +61,6 @@ dependencies = [
 [[package]]
 name = "au"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/au.git#b45e5fcef99c879bc2dad4c70e5c3d9581800e7a"
 dependencies = [
  "bytes",
  "chrono",
@@ -216,34 +215,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
-name = "core2"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b49ba7ef1ad6107f8824dbe97de947cbaac53c44e7f9756a1fba0d37c1eec505"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "crc"
-version = "3.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69e6e4d7b33a94f0991c26729976b10ebde1d34c3ee82408fb536164fa10d636"
-dependencies = [
- "crc-catalog",
-]
-
-[[package]]
-name = "crc-catalog"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
-
-[[package]]
 name = "either"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a47c1c47d2f5964e29c61246e81db715514cd532db6b5116a25ea3c03d6780a2"
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b45de904aa0b010bce2ab45264d0631681847fa7b6f2eaa7dab7619943bc4f59"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "errno"
@@ -276,6 +260,18 @@ dependencies = [
  "syn 1.0.109",
  "synstructure",
 ]
+
+[[package]]
+name = "fixedbitset"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
+name = "four-cc"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "431a4c31778fde52b4400de34975f219eeca55cc829a9de157cd743a5b230ecb"
 
 [[package]]
 name = "fuchsia-cprng"
@@ -532,16 +528,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mpeg2"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/av-rs.git#e608602624f22a89a2d78da5b1d3b13c79bbf884"
-dependencies = [
- "byteorder",
- "core2",
- "crc",
-]
-
-[[package]]
 name = "mpeg2ts"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -549,6 +535,17 @@ checksum = "7a38c92bbb0d15f62ed915c392f2d675e3c0889c98be7ad418ae660bfcb7f3b2"
 dependencies = [
  "byteorder",
  "trackable 0.2.24",
+]
+
+[[package]]
+name = "mpeg2ts-reader"
+version = "0.16.0"
+source = "git+https://github.com/wavey-ai/mpeg2ts-reader.git#07a2d39f689326f698e09ad9b09907376391f9e1"
+dependencies = [
+ "encoding_rs",
+ "fixedbitset",
+ "log",
+ "smptera-format-identifiers-rust",
 ]
 
 [[package]]
@@ -847,6 +844,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
+name = "smptera-format-identifiers-rust"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b79962555faf3a7892357f69d0306269cb1b265007957252c843953804884750"
+dependencies = [
+ "four-cc",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1009,7 +1015,7 @@ dependencies = [
  "chrono",
  "futures",
  "h264",
- "mpeg2",
+ "mpeg2ts-reader",
  "mse_fmp4",
  "srt",
  "tokio",

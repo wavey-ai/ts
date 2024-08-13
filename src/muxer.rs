@@ -216,7 +216,7 @@ fn sample_rate_index(sample_rate: u32) -> u8 {
     }
 }
 
-fn extract_aac_data(sound_data: &[u8]) -> Option<&[u8]> {
+pub fn extract_aac_data(sound_data: &[u8]) -> Option<&[u8]> {
     if sound_data.len() < 7 {
         return None;
     }

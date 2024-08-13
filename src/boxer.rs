@@ -1,4 +1,5 @@
 use crate::demuxer::AccessUnit;
+use crate::muxer::extract_aac_data;
 use bytes::Bytes;
 use mse_fmp4::io::WriteTo;
 use mse_fmp4::{
@@ -19,14 +20,13 @@ pub struct Fmp4 {
     pub duration: u32,
 }
 
-pub fn ticks_to_hz(ticks: u64, clock_hz: u32) -> u32 {
-    // Avoid division by zero
-    if ticks == 0 {
-        return 0;
-    }
+pub fn ticks_to_hz(ticks: u64, target_hz: u32) -> u64 {
+    (ticks * u64::from(target_hz) + 45000) / 90000
+}
 
-    // Calculate the frequency in Hz as u64
-    clock_hz / ticks as u32
+pub fn pts_to_ms_timescale(pts: u64) -> u64 {
+    // Convert from 90kHz to 1000Hz (milliseconds)
+    (pts * 1000 + 45000) / 90000
 }
 
 pub fn ticks_to_ms(ticks: u64) -> u64 {
@@ -118,7 +118,6 @@ pub fn box_fmp4(
         segment.moof_box.traf_boxes.push(traf);
     }
 
-    let mut frame_duration = 0;
     let mut sampling_frequency =
         SamplingFrequency::from_frequency(0).unwrap_or_else(|_| SamplingFrequency::Hz48000);
     let mut channel_configuration =
@@ -126,26 +125,24 @@ pub fn box_fmp4(
     let mut profile = AacProfile::Main;
 
     for a in aacs.iter() {
-        let mut bytes = &a.data[..];
-        while !bytes.is_empty() {
-            if let Ok(header) = AdtsHeader::read_from(&mut bytes) {
-                let sample_size = header.raw_data_blocks_len();
-                sampling_frequency = header.sampling_frequency;
-                channel_configuration = header.channel_configuration;
-                profile = header.profile;
-                frame_duration =
-                    ((1024 as f32 / sampling_frequency.as_u32() as f32) * 1000.0).round() as u64;
-                aac_samples.push(Sample {
-                    duration: Some(ticks_to_hz(frame_duration, sampling_frequency.as_u32())),
-                    size: Some(u32::from(sample_size)),
-                    flags: None,
-                    composition_time_offset: None,
-                });
-                aac_data.extend_from_slice(&bytes[..sample_size as usize]);
-                bytes = &bytes[sample_size as usize..];
-            } else {
-                dbg!("error");
-            }
+        if let Ok(header) = AdtsHeader::read_from(&mut &a.data[..]) {
+            let sample_size: u16 = header.raw_data_blocks_len();
+            sampling_frequency = header.sampling_frequency;
+            channel_configuration = header.channel_configuration;
+            profile = header.profile;
+            let frame_duration =
+                ((1024 as f32 / sampling_frequency.as_u32() as f32) * 1000.0).round() as u32;
+
+            aac_samples.push(Sample {
+                duration: Some(frame_duration),
+                size: Some(u32::from(sample_size)),
+                flags: None,
+                composition_time_offset: None,
+            });
+        }
+
+        if let Some(frame) = extract_aac_data(&a.data) {
+            aac_data.extend_from_slice(frame);
         }
     }
 
@@ -159,14 +156,13 @@ pub fn box_fmp4(
         traf.tfhd_box.default_sample_duration = None;
         traf.trun_box.data_offset = Some(0);
         traf.trun_box.samples = aac_samples;
-        traf.tfdt_box.base_media_decode_time =
-            ticks_to_hz(aacs[0].pts, sampling_frequency.as_u32());
+        traf.tfdt_box.base_media_decode_time = pts_to_ms_timescale(aacs[0].pts) as u32;
         segment.moof_box.traf_boxes.push(traf);
 
         segment.add_track_data(1, &aac_data);
 
         audio_track.tkhd_box.duration = 0;
-        audio_track.mdia_box.mdhd_box.timescale = sampling_frequency.as_u32();
+        audio_track.mdia_box.mdhd_box.timescale = 1000;
         audio_track.mdia_box.mdhd_box.duration = 0;
 
         let aac_sample_entry = AacSampleEntry {

@@ -7,14 +7,17 @@ edition = "2021"
 anyhow = "1.0.82"
 bytes = "1.6.0"
 futures = "0.3.30"
-au = { path = "../au" }
-srt = { git = "https://github.com/wavey-ai/av-rs.git", features = ["async"] }
 h264 = { git = "https://github.com/wavey-ai/av-rs.git" }
 xmpegts = { git = "https://github.com/wavey-ai/xiu" }
 mse_fmp4 = { git = "https://github.com/wavey-ai/mse_fmp4.git" }
 tokio-stream = "0.1.15"
-tokio = { version = "1.37.0", features = ["sync"] }
+tokio = { version = "1.37.0", features = ["full"] }
 byteorder = "1.5.0"
 chrono = "0.4.38"
+au = { path = "../au" }
 mpeg2ts-reader = { git = "https://github.com/wavey-ai/mpeg2ts-reader.git" }
 tracing = "0.1.40"
+flate2 = "1.0.28"
+xxhash-rust = { version = "0.8.10", features = ["xxh3", "const_xxh3"] }
+mpeg2 = { git = "https://github.com/wavey-ai/av-rs.git" }
+srt-tokio = "0.4.4"

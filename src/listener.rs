@@ -29,14 +29,12 @@ pub async fn start_srt_listener(
         oneshot::Receiver<()>,
         oneshot::Receiver<()>,
         watch::Sender<()>,
-        mpsc::Receiver<AccessUnit>,
     ),
     Box<dyn Error + Send + Sync>,
 > {
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
     let (up_tx, up_rx) = oneshot::channel();
     let (fin_tx, fin_rx) = oneshot::channel();
-    let (tx, rx) = mpsc::channel::<AccessUnit>(16);
 
     let srv = async move {
         match SrtListener::builder().bind(port).await {
@@ -92,10 +90,9 @@ pub async fn start_srt_listener(
                             let playlists = playlists.clone();
                             match request.accept(None).await {
                                 Ok(srt_socket) => {
-                                    let tx_clone = tx.clone();
                                     let forward_sockets_clone = Arc::clone(&forward_sockets);
                                     tokio::spawn(async move {
-                                        handle_client(stream_id, srt_socket, tx_clone, forward_sockets_clone, playlists, min_part_ms).await;
+                                        handle_client(stream_id, srt_socket, forward_sockets_clone, playlists, min_part_ms).await;
                                     });
                                 }
                                 Err(e) => {
@@ -124,13 +121,12 @@ pub async fn start_srt_listener(
 
     tokio::spawn(srv);
 
-    Ok((up_rx, fin_rx, shutdown_tx, rx))
+    Ok((up_rx, fin_rx, shutdown_tx))
 }
 
 async fn handle_client(
     stream_id: u64,
     mut srt_socket: SrtSocket,
-    tx: mpsc::Sender<AccessUnit>,
     forward_sockets: Arc<Mutex<Vec<SrtSocket>>>,
     playlists: Arc<Playlists>,
     min_part_ms: u32,
@@ -146,7 +142,8 @@ async fn handle_client(
                     Ok(data) => {
                         let bytes = Bytes::from(data.1);
                         let settings = srt_socket.settings();
-                        let key = settings.stream_id.as_ref().unwrap();
+                        let default = String::from("foo");
+                        let key = settings.stream_id.as_ref().unwrap_or(&default);
                         i = i.wrapping_add(1);
                         if i%400 == 0 {
                             info!("{} key={} id={} addr={}", SRT_UP, key, stream_id, settings.remote);

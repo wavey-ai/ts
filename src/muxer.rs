@@ -1,6 +1,6 @@
 use crate::AccessUnit;
 use bytes::{Bytes, BytesMut};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use xmpegts::{
     define::{epsi_stream_type, MPEG_FLAG_IDR_FRAME},
     ts::TsMuxer,
@@ -8,7 +8,7 @@ use xmpegts::{
 
 pub async fn mux_stream(
     mut rx: mpsc::Receiver<AccessUnit>,
-    tx: broadcast::Sender<Bytes>,
+    tx: mpsc::Sender<Bytes>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut ts_muxer = TsMuxer::new();
     let audio_pid = ts_muxer
@@ -56,11 +56,7 @@ pub async fn mux_stream(
         }
 
         let data = ts_muxer.get_data();
-
-        for d in chunk_bytes_mut(&data, 1316) {
-            let b = d.freeze();
-            let _ = tx.send(b);
-        }
+        let _ = tx.try_send(data.freeze());
     }
 
     Ok(())
@@ -80,10 +76,6 @@ fn chunk_bytes_mut(data: &bytes::BytesMut, chunk_size: usize) -> Vec<bytes::Byte
     }
 
     chunks
-}
-
-fn has_annex_b_prefix(data: &Bytes) -> bool {
-    data.starts_with(&[0x00, 0x00, 0x01]) || data.starts_with(&[0x00, 0x00, 0x00, 0x01])
 }
 
 pub fn extract_aac_data(sound_data: &[u8]) -> Option<&[u8]> {

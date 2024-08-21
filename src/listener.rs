@@ -1,5 +1,6 @@
-use crate::demuxer::{new_demuxer, AccessUnit};
+use crate::demuxer::new_demuxer;
 use crate::playlist::Playlists;
+use crate::AccessUnit;
 use bytes::Bytes;
 use futures::{future, stream, SinkExt, StreamExt};
 use srt_tokio::{options::*, SrtListener, SrtSocket};
@@ -7,11 +8,16 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::select;
 use tokio::sync::Mutex;
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::time::{self, Duration};
+use tracing::{debug, error, info};
 use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
-use tracing::{debug, error, info};
+const SRT_NEW: &str = "SRT:NEW";
+const SRT_UP: &str = "SRT:UP";
+const SRT_DOWN: &str = "SRT:DOWN";
 
 pub async fn start_srt_listener(
     port: u16,
@@ -58,6 +64,7 @@ pub async fn start_srt_listener(
                             let mut stream_id: u64 = 0;
                             if let Some(id) = &request.stream_id() {
                                 stream_id = const_xxh3(&id.as_bytes());
+                                info!("{} {} {}", SRT_NEW, id, stream_id );
                             }
 
                             let forward_sockets_futures = forward_addresses
@@ -128,24 +135,22 @@ async fn handle_client(
     playlists: Arc<Playlists>,
     min_part_ms: u32,
 ) {
-    let client_desc = format!(
-        "(ip_port: {}, sockid: {})",
-        srt_socket.settings().remote,
-        srt_socket.settings().remote_sockid.0
-    );
+    let (mut fin_rx, tx_demux) = new_demuxer(stream_id, playlists.clone(), min_part_ms);
 
-    info!("\nNew client connected: {client_desc}");
-
-    let tx_demux = new_demuxer(stream_id, playlists.clone(), min_part_ms);
+    let mut i: u32 = 0;
 
     loop {
-        tokio::select! {
+        select! {
             Some(packet) = srt_socket.next() => {
                 match packet {
                     Ok(data) => {
                         let bytes = Bytes::from(data.1);
-
-                         // Forward to all specified addresses
+                        let settings = srt_socket.settings();
+                        let key = settings.stream_id.as_ref().unwrap();
+                        i = i.wrapping_add(1);
+                        if i%400 == 0 {
+                            info!("{} key={} id={} addr={}", SRT_UP, key, stream_id, settings.remote);
+                        }
                         let mut sockets = forward_sockets.lock().await;
                         for (index, forward_socket) in sockets.iter_mut().enumerate() {
                             if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
@@ -164,10 +169,18 @@ async fn handle_client(
                     }
                 }
             }
+            _ = fin_rx.changed() => {
+                info!("{} id={} rejected - playlist slots full", SRT_DOWN, stream_id);
+                break;
+            }
+            else => {
+                // Exit the loop when there are no more packets
+                break;
+            }
         }
     }
 
-    info!("\nClient {client_desc} disconnected");
+    info!("\nClient disconnected");
     playlists.fin(stream_id);
 
     info!("srt stream {} ended: shutdown complete", stream_id);

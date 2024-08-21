@@ -10,8 +10,10 @@ use std::sync::{
     RwLock,
 };
 use std::sync::{Arc, Mutex};
+use tracing::{debug, error, info};
 use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
+#[derive(Copy, Clone)]
 pub struct Options {
     pub max_segments: usize,
     pub num_playlists: usize,
@@ -40,37 +42,69 @@ pub struct Playlists {
     fmp4_cache: Arc<RingBuffer>,
     m3u8_cache: Arc<Store>,
     playlists: Mutex<BTreeMap<u64, Playlist>>,
+    active: AtomicUsize,
 }
 
 impl Playlists {
-    pub fn new(fmp4_cache: Arc<RingBuffer>, m3u8_cache: Arc<Store>) -> Self {
-        Self {
-            fmp4_cache,
-            m3u8_cache,
-            playlists: Mutex::new(BTreeMap::new()),
-        }
+    pub fn new(options: Options) -> (Arc<Self>, Arc<RingBuffer>, Arc<Store>) {
+        let fmp4_cache = Arc::new(RingBuffer::new(options));
+        let m3u8_cache = Arc::new(Store::new(options));
+
+        (
+            Arc::new(Self {
+                fmp4_cache: Arc::clone(&fmp4_cache),
+                m3u8_cache: Arc::clone(&m3u8_cache),
+                playlists: Mutex::new(BTreeMap::new()),
+                active: AtomicUsize::new(0),
+            }),
+            Arc::clone(&fmp4_cache),
+            Arc::clone(&m3u8_cache),
+        )
+    }
+
+    pub fn active(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
     }
 
     pub fn fin(&self, id: u64) {
-        self.playlists.lock().unwrap().remove(&id);
+        let mut playlists = self.playlists.lock().unwrap();
+        if playlists.remove(&id).is_some() {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+        }
         self.m3u8_cache.zero_stream_id(id);
         self.fmp4_cache.zero_stream_id(id);
     }
 
-    pub fn add(&self, stream_id: u64, fmp4: Fmp4) {
-        let (m3u8, seg, seq, idx) = {
-            let mut lock = self.playlists.lock().unwrap();
-            let playlist = lock
+    pub fn add(&self, stream_id: u64, fmp4: Fmp4) -> bool {
+        let mut playlists = self.playlists.lock().unwrap();
+
+        if !playlists.contains_key(&stream_id) {
+            if self.active.load(Ordering::SeqCst) >= self.fmp4_cache.options.num_playlists {
+                return false;
+            }
+
+            let n = self.active.fetch_add(1, Ordering::SeqCst);
+            info!("PLAY:NEW active={}", n + 1);
+        }
+
+        let (m3u8, seg, seq, idx, new_seg) = {
+            let playlist: &mut Playlist = playlists
                 .entry(stream_id)
                 .or_insert_with(|| Playlist::new(Options::default()));
             playlist.add_part(fmp4.duration, fmp4.key)
         };
+
+        if new_seg {
+            info!("PLAY:UP active={}", self.active());
+        }
 
         if let Some(init) = fmp4.init {
             self.m3u8_cache.set_init(stream_id, init);
         }
         self.fmp4_cache.add(stream_id, seq as usize, fmp4.data);
         self.m3u8_cache.add(stream_id, seg, seq, idx, m3u8);
+
+        true
     }
 }
 
@@ -120,7 +154,8 @@ impl Playlist {
         res
     }
 
-    pub fn add_part(&mut self, duration: u32, key: bool) -> (Bytes, usize, usize, usize) {
+    pub fn add_part(&mut self, duration: u32, key: bool) -> (Bytes, usize, usize, usize, bool) {
+        let mut new_seg = false;
         if key && (self.seg_dur) >= self.options.segment_min_ms {
             self.seg_durs.push(self.seg_dur);
             self.seg_id += 1;
@@ -129,6 +164,7 @@ impl Playlist {
 
             let seg_index = (self.seg_id as usize % self.options.max_segments as usize) as usize;
             self.seg_parts[seg_index].clear();
+            new_seg = true;
         }
         let idx = self.idx;
         self.idx += 1;
@@ -144,6 +180,7 @@ impl Playlist {
             self.seg_id as usize,
             self.seq as usize,
             idx as usize,
+            new_seg,
         )
     }
 

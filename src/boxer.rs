@@ -1,5 +1,5 @@
-use crate::demuxer::AccessUnit;
-use crate::muxer::extract_aac_data;
+use crate::aac::extract_aac_data;
+use crate::AccessUnit;
 use bytes::Bytes;
 use mse_fmp4::io::WriteTo;
 use mse_fmp4::{
@@ -142,7 +142,7 @@ pub fn box_fmp4(
         }
 
         if let Some(frame) = extract_aac_data(&a.data) {
-            aac_data.extend_from_slice(frame);
+            aac_data.extend_from_slice(&frame);
         }
     }
 

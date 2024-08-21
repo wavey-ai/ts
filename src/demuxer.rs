@@ -1,5 +1,6 @@
 use crate::boxer::{box_fmp4, ticks_to_ms};
 use crate::playlist::Playlists;
+use crate::AccessUnit;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use h264::{Bitstream, Decode, NALUnit, SequenceParameterSet};
@@ -12,31 +13,38 @@ use mpeg2ts_reader::{
 };
 use mse_fmp4::avc::AvcDecoderConfigurationRecord;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{mpsc, watch};
 
 use tracing::{debug, error, info};
 
-#[derive(Debug, Clone)]
-pub struct AccessUnit {
-    pub key: bool,
-    pub pts: u64,
-    pub dts: u64,
-    pub data: Bytes,
-}
-
-pub fn new_demuxer(stream_id: u64, playlists: Arc<Playlists>, min_part_ms: u32) -> Sender<Bytes> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(32);
+pub fn new_demuxer(
+    stream_id: u64,
+    playlists: Arc<Playlists>,
+    min_part_ms: u32,
+) -> (watch::Receiver<()>, mpsc::Sender<Bytes>) {
+    let (tx, mut rx) = mpsc::channel::<Bytes>(32);
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(());
+    let (fin_tx, fin_rx) = watch::channel(());
 
     tokio::spawn(async move {
-        let mut ctx = DumpDemuxContext::new(stream_id, playlists, min_part_ms);
+        let mut ctx = DumpDemuxContext::new(stream_id, playlists, min_part_ms, shutdown_tx);
         let mut demux = demultiplex::Demultiplex::new(&mut ctx);
 
-        while let Some(data) = rx.recv().await {
-            demux.push(&mut ctx, &data);
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    break;
+                }
+                Some(data) = rx.recv() => {
+                    demux.push(&mut ctx, &data);
+                }
+            }
         }
+
+        fin_tx.send(());
     });
 
-    tx
+    (fin_rx, tx)
 }
 
 pub struct DumpDemuxContext {
@@ -46,11 +54,17 @@ pub struct DumpDemuxContext {
     playlists: Arc<Playlists>,
     adts_buf: Vec<AccessUnit>,
     h264_buf: Vec<AccessUnit>,
+    shutdown_tx: watch::Sender<()>,
 }
 
 // Implement the constructor for the custom context
 impl DumpDemuxContext {
-    fn new(stream_id: u64, playlists: Arc<Playlists>, min_part_ms: u32) -> Self {
+    fn new(
+        stream_id: u64,
+        playlists: Arc<Playlists>,
+        min_part_ms: u32,
+        shutdown_tx: watch::Sender<()>,
+    ) -> Self {
         DumpDemuxContext {
             changeset: FilterChangeset::default(),
             min_part_ms,
@@ -58,6 +72,7 @@ impl DumpDemuxContext {
             playlists,
             adts_buf: Vec::new(),
             h264_buf: Vec::new(),
+            shutdown_tx,
         }
     }
 
@@ -328,7 +343,9 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
                                 self.height,
                             );
 
-                            _ctx.playlists.add(_ctx.stream_id, fmp4);
+                            if !_ctx.playlists.add(_ctx.stream_id, fmp4) {
+                                let _ = _ctx.shutdown_tx.send(());
+                            }
                             self.seg_seq += 1;
                             _ctx.h264_buf.clear();
                             _ctx.adts_buf.clear();
@@ -337,6 +354,7 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
                     }
 
                     let au = AccessUnit {
+                        avc: true,
                         key: self.is_keyframe,
                         data: Bytes::from(self.lp_nalus.to_vec()),
                         pts: self.pts,
@@ -353,6 +371,7 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
             StreamType::ADTS => {
                 let data_slice: &[u8] = &self.accumulated_payload;
                 let au = AccessUnit {
+                    avc: false,
                     key: false,
                     pts: self.pts,
                     dts: self.dts,

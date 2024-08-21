@@ -20,7 +20,7 @@ const SRT_UP: &str = "SRT:UP";
 const SRT_DOWN: &str = "SRT:DOWN";
 
 pub async fn start_srt_listener(
-    port: u16,
+    addr: SocketAddr,
     forward_addresses: Vec<SocketAddr>,
     playlists: Arc<Playlists>,
     min_part_ms: u32,
@@ -37,9 +37,9 @@ pub async fn start_srt_listener(
     let (fin_tx, fin_rx) = oneshot::channel();
 
     let srv = async move {
-        match SrtListener::builder().bind(port).await {
+        match SrtListener::builder().bind(addr).await {
             Ok((_, mut incoming)) => {
-                info!("SRT Multiplex Server is listening on port: {port}");
+                info!("SRT Multiplex Server is listening at: {addr}");
 
                 if let Err(e) = up_tx.send(()) {
                     error!("Failed to send startup signal: {:?}", e);

@@ -21,3 +21,4 @@ xxhash-rust = { version = "0.8.10", features = ["xxh3", "const_xxh3"] }
 mpeg2 = { git = "https://github.com/wavey-ai/av-rs.git" }
 srt-tokio = "0.4.4"
 rml_rtmp = { git = "https://github.com/wavey-ai/rust-media-libs.git" }
+discovery = { git = "https://github.com/wavey-ai/discovery.git" }

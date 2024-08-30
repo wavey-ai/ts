@@ -55,9 +55,6 @@ pub async fn start_srt_listener(
 
                 let playlists = playlists.clone();
 
-                let lan_nodes = lan.clone();
-                let dns_nodes = dns.clone();
-
                 loop {
                     tokio::select! {
                         _ = shutdown_rx.changed() => {
@@ -74,72 +71,53 @@ pub async fn start_srt_listener(
 
                             let stream_id_str = stream_id.to_string();
 
-                            let forward_lan_sockets = if let Some(lan_nodes) = &lan_nodes {
-                                let forward_lan_addresses = lan_nodes.all().into_iter().map(|n| n.ip() ).collect::<Vec<_>>();
-                                let forward_lan_sockets_futures = forward_lan_addresses
-                                    .iter()
-                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + &format!(":{}", priv_port),  Some(&stream_id_str)));
+                            // Clone everything needed for handling the client connection
+                            let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
+                            let forward_dns_sockets = Arc::new(Mutex::new(Vec::new()));
+                            let playlists_clone = playlists.clone();
+                            let lan_nodes_clone = lan.clone();
+                            let dns_nodes_clone = dns.clone();
 
-                                let forward_lan_sockets_results = future::join_all(forward_lan_sockets_futures).await;
-                                Some(Arc::new(Mutex::new(
-                                    forward_lan_sockets_results
-                                        .into_iter()
-                                        .enumerate()
-                                        .filter_map(|(index, result)| match result {
-                                            Ok(socket) => Some(socket),
-                                            Err(e) => {
-                                                error!(
-                                                    "Failed to connect to LAN node {}: {:?}",
-                                                    forward_lan_addresses[index], e
-                                                );
-                                                None
+                            tokio::spawn(async move {
+                                if let Ok(srt_socket) = request.accept(None).await {
+                                    // Handle LAN nodes
+                                    if let Some(lan_nodes) = lan_nodes_clone {
+                                        let mut rx = lan_nodes.rx();
+                                        while let Ok(ip) = rx.recv().await {
+                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", priv_port), Some(&stream_id_str)).await {
+                                                Ok(socket) => {
+                                                    forward_lan_sockets.lock().await.push(socket);
+                                                    info!("Added new LAN node: {}", ip);
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to connect to new LAN node {}: {:?}", ip, e);
+                                                }
                                             }
-                                        })
-                                        .collect::<Vec<_>>(),
-                                )))
-                            } else {
-                                None
-                            };
+                                        }
+                                    }
 
-                            let forward_dns_sockets = if let Some(dns_nodes) = &dns_nodes {
-                                let forward_dns_addresses = dns_nodes.all().into_iter().map(|n| n.ip() ).collect::<Vec<_>>();
-                                let forward_dns_sockets_futures = forward_dns_addresses
-                                    .iter()
-                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + &format!(":{}", pub_port), Some(&stream_id_str)));
-                                let forward_dns_sockets_results = future::join_all(forward_dns_sockets_futures).await;
-                                Some(Arc::new(Mutex::new(
-                                    forward_dns_sockets_results
-                                        .into_iter()
-                                        .enumerate()
-                                        .filter_map(|(index, result)| match result {
-                                            Ok(socket) => Some(socket),
-                                            Err(e) => {
-                                                error!(
-                                                    "Failed to connect to DNS node {}: {:?}",
-                                                    forward_dns_addresses[index], e
-                                                );
-                                                None
+                                    // Handle DNS nodes
+                                    if let Some(dns_nodes) = dns_nodes_clone {
+                                        let mut rx = dns_nodes.rx();
+                                        while let Ok(ip) = rx.recv().await {
+                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", pub_port), Some(&stream_id_str)).await {
+                                                Ok(socket) => {
+                                                    forward_dns_sockets.lock().await.push(socket);
+                                                    info!("Added new DNS node: {}", ip);
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to connect to new DNS node {}: {:?}", ip, e);
+                                                }
                                             }
-                                        })
-                                        .collect::<Vec<_>>(),
-                                )))
-                            } else {
-                                None
-                            };
+                                        }
+                                    }
 
-                            match request.accept(None).await {
-                                Ok(srt_socket) => {
-                                    let forward_lan_sockets_clone = forward_lan_sockets.clone();
-                                    let forward_dns_sockets_clone = forward_dns_sockets.clone();
-                                    let playlists_clone = playlists.clone();
-                                    tokio::spawn(async move {
-                                        handle_client(stream_id, srt_socket, forward_lan_sockets_clone, forward_dns_sockets_clone, playlists_clone, min_part_ms).await;
-                                    });
+                                    // Handle the client connection
+                                    handle_client(stream_id, srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
+                                } else {
+                                    error!("Failed to accept SRT connection");
                                 }
-                                Err(e) => {
-                                    error!("Error accepting connection: {:?}", e);
-                                }
-                            }
+                            });
                         }
 
                         // Handle case when stream ends
@@ -168,8 +146,8 @@ pub async fn start_srt_listener(
 async fn handle_client(
     stream_id: u64,
     mut srt_socket: SrtSocket,
-    forward_lan_sockets: Option<Arc<Mutex<Vec<SrtSocket>>>>,
-    forward_dns_sockets: Option<Arc<Mutex<Vec<SrtSocket>>>>,
+    forward_lan_sockets: Arc<Mutex<Vec<SrtSocket>>>,
+    forward_dns_sockets: Arc<Mutex<Vec<SrtSocket>>>,
     playlists: Arc<Playlists>,
     min_part_ms: u32,
 ) {
@@ -192,8 +170,8 @@ async fn handle_client(
                         }
 
                         // Forward to LAN sockets
-                        if let Some(lan_sockets) = &forward_lan_sockets {
-                            let mut lan_sockets = lan_sockets.lock().await;
+                        {
+                            let mut lan_sockets = forward_lan_sockets.lock().await;
                             for (index, forward_socket) in lan_sockets.iter_mut().enumerate() {
                                 if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
                                     error!("Error forwarding to LAN socket {}: {:?}", index, e);
@@ -202,8 +180,8 @@ async fn handle_client(
                         }
 
                         // Forward to DNS sockets if available
-                        if let Some(dns_sockets) = &forward_dns_sockets {
-                            let mut dns_sockets = dns_sockets.lock().await;
+                        {
+                            let mut dns_sockets = forward_dns_sockets.lock().await;
                             for (index, forward_socket) in dns_sockets.iter_mut().enumerate() {
                                 if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
                                     error!("Error forwarding to DNS socket {}: {:?}", index, e);

@@ -74,7 +74,7 @@ pub async fn start_srt_listener(
                             let forward_lan_addresses = lan_nodes.all().into_iter().map(|n| n.ip() ).collect::<Vec<_>>();
                             let forward_lan_sockets_futures = forward_lan_addresses
                                 .iter()
-                                .map(|addr| SrtSocket::builder().call(addr.to_string(), None));
+                                .map(|addr| SrtSocket::builder().call(addr.to_string() + ":8001", None));
 
                             let forward_lan_sockets_results = future::join_all(forward_lan_sockets_futures).await;
                             let forward_lan_sockets = Arc::new(Mutex::new(
@@ -99,7 +99,7 @@ pub async fn start_srt_listener(
                                 let forward_dns_addresses = dns_nodes.all().into_iter().map(|n| n.ip() ).collect::<Vec<_>>();
                                 let forward_dns_sockets_futures = forward_dns_addresses
                                     .iter()
-                                    .map(|addr| SrtSocket::builder().call(addr.to_string(), None));
+                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + ":8000", None));
 
                                 let forward_dns_sockets_results = future::join_all(forward_dns_sockets_futures).await;
                                 Some(Arc::new(Mutex::new(

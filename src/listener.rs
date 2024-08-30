@@ -60,13 +60,11 @@ pub async fn start_srt_listener(
 
                 loop {
                     tokio::select! {
-                        // Handle shutdown
                         _ = shutdown_rx.changed() => {
                             info!("Received shutdown signal, exiting...");
                             break;
                         }
 
-                        // Handle incoming connections
                         Some(request) = incoming.incoming().next() => {
                             let mut stream_id: u64 = 0;
                             if let Some(id) = &request.stream_id() {
@@ -74,11 +72,13 @@ pub async fn start_srt_listener(
                                 info!("{} {} {}", SRT_NEW, id, stream_id );
                             }
 
+                            let stream_id_str = stream_id.to_string();
+
                             let forward_lan_sockets = if let Some(lan_nodes) = &lan_nodes {
                                 let forward_lan_addresses = lan_nodes.all().into_iter().map(|n| n.ip() ).collect::<Vec<_>>();
                                 let forward_lan_sockets_futures = forward_lan_addresses
                                     .iter()
-                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + ":8001", None));
+                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + &format!(":{}", priv_port),  Some(&stream_id_str)));
 
                                 let forward_lan_sockets_results = future::join_all(forward_lan_sockets_futures).await;
                                 Some(Arc::new(Mutex::new(
@@ -101,13 +101,11 @@ pub async fn start_srt_listener(
                                 None
                             };
 
-                            // Create forward sockets for DNS nodes if available
                             let forward_dns_sockets = if let Some(dns_nodes) = &dns_nodes {
                                 let forward_dns_addresses = dns_nodes.all().into_iter().map(|n| n.ip() ).collect::<Vec<_>>();
                                 let forward_dns_sockets_futures = forward_dns_addresses
                                     .iter()
-                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + ":8000", None));
-
+                                    .map(|addr| SrtSocket::builder().call(addr.to_string() + &format!(":{}", pub_port), Some(&stream_id_str)));
                                 let forward_dns_sockets_results = future::join_all(forward_dns_sockets_futures).await;
                                 Some(Arc::new(Mutex::new(
                                     forward_dns_sockets_results

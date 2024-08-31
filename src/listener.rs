@@ -75,6 +75,11 @@ pub async fn start_srt_listener(
                             }
 
                             let fwd_to_dns = stream_key.is_origin();
+                            if fwd_to_dns {
+                                info!("srt connection from {} is new stream key; forwarding to dns regions", request.remote().ip())
+                            } else {
+                                info!("srt connection from {} has stream id; not forwarding to dns regions", request.remote().ip())
+                            }
 
                             let fwd_to_lan = request.remote().ip().is_global();
                             if fwd_to_lan {

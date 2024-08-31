@@ -82,6 +82,7 @@ pub async fn start_srt_listener(
                             } else {
                                 info!("srt connection from {} appears local; doing nothing", request.remote().ip())
                             }
+
                             let stream_id_str = stream_key.id().to_string();
 
                             let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
@@ -169,11 +170,13 @@ async fn handle_client(
 
     let mut i: u32 = 0;
 
+    dbg!("in client");
     loop {
         select! {
             Some(packet) = srt_socket.next() => {
                 match packet {
                     Ok(data) => {
+                        dbg!(&data);
                         let bytes = Bytes::from(data.1);
                         let settings = srt_socket.settings();
                         let default = String::from("foo");

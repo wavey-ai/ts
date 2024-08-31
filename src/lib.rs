@@ -12,6 +12,7 @@ pub mod demuxer;
 pub mod aac;
 pub mod muxer;
 pub mod playlist;
+pub mod streamkey;
 
 #[derive(Debug, Clone)]
 pub struct AccessUnit {

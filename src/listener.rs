@@ -1,5 +1,6 @@
 use crate::demuxer::new_demuxer;
 use crate::playlist::Playlists;
+use crate::streamkey::{Gatekeeper, Streamkey};
 use bytes::Bytes;
 use discovery::Nodes;
 use futures::{future, stream, SinkExt, StreamExt};
@@ -13,20 +14,18 @@ use tokio::sync::Mutex;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
-use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
 
 const SRT_NEW: &str = "SRT:NEW";
 const SRT_UP: &str = "SRT:UP";
 const SRT_DOWN: &str = "SRT:DOWN";
 
 pub async fn start_srt_listener(
+    base64_encoded_pem_key: &str,
     addr: SocketAddr,
     playlists: Arc<Playlists>,
     min_part_ms: u32,
     lan: Option<Arc<Nodes>>,
     dns: Option<Arc<Nodes>>,
-    priv_port: u16,
-    pub_port: u16,
 ) -> Result<
     (
         oneshot::Receiver<()>,
@@ -39,7 +38,9 @@ pub async fn start_srt_listener(
     let (up_tx, up_rx) = oneshot::channel();
     let (fin_tx, fin_rx) = oneshot::channel();
 
-    let is_priv = priv_port == addr.port();
+    let gatekeeper = Gatekeeper::new(base64_encoded_pem_key)?;
+
+    let port = addr.port();
 
     let srv = async move {
         match SrtListener::builder().bind(addr).await {
@@ -63,13 +64,21 @@ pub async fn start_srt_listener(
                         }
 
                         Some(request) = incoming.incoming().next() => {
-                            let mut stream_id: u64 = 0;
+                            let stream_key: Streamkey;
                             if let Some(id) = &request.stream_id() {
-                                stream_id = if is_priv { id.parse::<u64>().unwrap_or(0) } else { const_xxh3(&id.as_bytes()) };
-                                info!("{} {} {}", SRT_NEW, id, stream_id );
+                                stream_key = gatekeeper.streamkey(id)?;
+                                info!("{} {} {}", SRT_NEW, stream_key.key(), stream_key.id());
+                            } else {
+                                return Err(Box::<dyn Error + Send + Sync>::from(
+                                    "Failed to retrieve stream key",
+                                ));
                             }
 
-                            let stream_id_str = stream_id.to_string();
+                            let fwd_to_dns = stream_key.is_origin();
+
+                            dbg!(&request);
+
+                            let stream_id_str = stream_key.id().to_string();
 
                             // Clone everything needed for handling the client connection
                             let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
@@ -84,7 +93,7 @@ pub async fn start_srt_listener(
                                     if let Some(lan_nodes) = lan_nodes_clone {
                                         let mut rx = lan_nodes.rx();
                                         while let Ok(ip) = rx.recv().await {
-                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", priv_port), Some(&stream_id_str)).await {
+                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
                                                 Ok(socket) => {
                                                     forward_lan_sockets.lock().await.push(socket);
                                                     info!("Added new LAN node: {}", ip);
@@ -100,7 +109,7 @@ pub async fn start_srt_listener(
                                     if let Some(dns_nodes) = dns_nodes_clone {
                                         let mut rx = dns_nodes.rx();
                                         while let Ok(ip) = rx.recv().await {
-                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", pub_port), Some(&stream_id_str)).await {
+                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
                                                 Ok(socket) => {
                                                     forward_dns_sockets.lock().await.push(socket);
                                                     info!("Added new DNS node: {}", ip);
@@ -113,7 +122,7 @@ pub async fn start_srt_listener(
                                     }
 
                                     // Handle the client connection
-                                    handle_client(stream_id, srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
+                                    handle_client(stream_key.id(), srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
                                 } else {
                                     error!("Failed to accept SRT connection");
                                 }

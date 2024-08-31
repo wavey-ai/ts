@@ -83,7 +83,6 @@ pub async fn start_srt_listener(
                                 info!("srt connection from {} appears local; doing nothing", request.remote().ip())
                             }
 
-                            dbg!("here");
                             let stream_id_str = stream_key.id().to_string();
 
                             let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
@@ -95,43 +94,47 @@ pub async fn start_srt_listener(
 
                             tokio::spawn(async move {
                                 if let Ok(srt_socket) = request.accept(None).await {
-                                    dbg!("accepted on sock");
                                     if fwd_to_lan {
                                         if let Some(lan_nodes) = lan_nodes_clone {
-                                            let mut rx = lan_nodes.rx();
-                                            while let Ok(ip) = rx.recv().await {
-                                                match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
-                                                    Ok(socket) => {
-                                                        forward_lan_sockets.lock().await.push(socket);
-                                                        info!("Added new LAN node: {}", ip);
-                                                    }
-                                                    Err(e) => {
-                                                        error!("Failed to connect to new LAN node {}: {:?}", ip, e);
+                                            let stream_id = stream_id_str.clone();
+                                            let forward_lan_sockets = forward_lan_sockets.clone();
+                                            tokio::spawn(async move {
+                                                let mut rx = lan_nodes.rx();
+                                                while let Ok(ip) = rx.recv().await {
+                                                    match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id)).await {
+                                                        Ok(socket) => {
+                                                            forward_lan_sockets.lock().await.push(socket);
+                                                            info!("Added new LAN node: {}", ip);
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Failed to connect to new LAN node {}: {:?}", ip, e);
+                                                        }
                                                     }
                                                 }
-                                            }
+                                            });
                                         }
                                     }
 
                                     if fwd_to_dns {
-                                        dbg!("fwd dns");
                                         if let Some(dns_nodes) = dns_nodes_clone {
-                                            let mut rx = dns_nodes.rx();
-                                            while let Ok(ip) = rx.recv().await {
-                                                match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
-                                                    Ok(socket) => {
-                                                        forward_dns_sockets.lock().await.push(socket);
-                                                        info!("Added new DNS node: {}", ip);
-                                                    }
-                                                    Err(e) => {
-                                                        error!("Failed to connect to new DNS node {}: {:?}", ip, e);
+                                            let stream_id = stream_id_str.clone();
+                                            let forward_dns_sockets = forward_dns_sockets.clone();
+                                            tokio::spawn(async move {
+                                                let mut rx = dns_nodes.rx();
+                                                while let Ok(ip) = rx.recv().await {
+                                                    match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id)).await {
+                                                        Ok(socket) => {
+                                                            forward_dns_sockets.lock().await.push(socket);
+                                                            info!("Added new DNS node: {}", ip);
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Failed to connect to new DNS node {}: {:?}", ip, e);
+                                                        }
                                                     }
                                                 }
-                                            }
+                                            });
                                         }
                                     }
-
-                                    dbg!("handle_client");
 
                                     handle_client(stream_key.id(), srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
                                 } else {
@@ -175,13 +178,11 @@ async fn handle_client(
 
     let mut i: u32 = 0;
 
-    dbg!("in client");
     loop {
         select! {
             Some(packet) = srt_socket.next() => {
                 match packet {
                     Ok(data) => {
-                        dbg!(&data);
                         let bytes = Bytes::from(data.1);
                         let settings = srt_socket.settings();
                         let default = String::from("foo");

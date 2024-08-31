@@ -1,3 +1,4 @@
+#![feature(ip)]
 use bytes::Bytes;
 
 #[macro_use]

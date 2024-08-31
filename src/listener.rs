@@ -3,15 +3,15 @@ use crate::playlist::Playlists;
 use crate::streamkey::{Gatekeeper, Streamkey};
 use bytes::Bytes;
 use discovery::Nodes;
-use futures::{future, stream, SinkExt, StreamExt};
-use srt_tokio::{options::*, SrtListener, SrtSocket};
+use futures::{SinkExt, StreamExt};
+use srt_tokio::{SrtListener, SrtSocket};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::select;
 use tokio::sync::Mutex;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{oneshot, watch};
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
@@ -77,51 +77,56 @@ pub async fn start_srt_listener(
                             let fwd_to_dns = stream_key.is_origin();
 
                             let fwd_to_lan = request.remote().ip().is_global();
-
+                            if fwd_to_lan {
+                                info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip())
+                            } else {
+                                info!("srt connection from {} appears local; doing nothing", request.remote().ip())
+                            }
                             let stream_id_str = stream_key.id().to_string();
 
-                            // Clone everything needed for handling the client connection
                             let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
                             let forward_dns_sockets = Arc::new(Mutex::new(Vec::new()));
                             let playlists_clone = playlists.clone();
                             let lan_nodes_clone = lan.clone();
                             let dns_nodes_clone = dns.clone();
 
+
                             tokio::spawn(async move {
                                 if let Ok(srt_socket) = request.accept(None).await {
-                                    // Handle LAN nodes
-                                    if let Some(lan_nodes) = lan_nodes_clone {
-                                        let mut rx = lan_nodes.rx();
-                                        while let Ok(ip) = rx.recv().await {
-                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
-                                                Ok(socket) => {
-                                                    forward_lan_sockets.lock().await.push(socket);
-                                                    info!("Added new LAN node: {}", ip);
-                                                }
-                                                Err(e) => {
-                                                    error!("Failed to connect to new LAN node {}: {:?}", ip, e);
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Handle DNS nodes
-                                    if let Some(dns_nodes) = dns_nodes_clone {
-                                        let mut rx = dns_nodes.rx();
-                                        while let Ok(ip) = rx.recv().await {
-                                            match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
-                                                Ok(socket) => {
-                                                    forward_dns_sockets.lock().await.push(socket);
-                                                    info!("Added new DNS node: {}", ip);
-                                                }
-                                                Err(e) => {
-                                                    error!("Failed to connect to new DNS node {}: {:?}", ip, e);
+                                    if fwd_to_lan {
+                                        if let Some(lan_nodes) = lan_nodes_clone {
+                                            let mut rx = lan_nodes.rx();
+                                            while let Ok(ip) = rx.recv().await {
+                                                match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
+                                                    Ok(socket) => {
+                                                        forward_lan_sockets.lock().await.push(socket);
+                                                        info!("Added new LAN node: {}", ip);
+                                                    }
+                                                    Err(e) => {
+                                                        error!("Failed to connect to new LAN node {}: {:?}", ip, e);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
 
-                                    // Handle the client connection
+                                    if fwd_to_dns {
+                                        if let Some(dns_nodes) = dns_nodes_clone {
+                                            let mut rx = dns_nodes.rx();
+                                            while let Ok(ip) = rx.recv().await {
+                                                match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id_str)).await {
+                                                    Ok(socket) => {
+                                                        forward_dns_sockets.lock().await.push(socket);
+                                                        info!("Added new DNS node: {}", ip);
+                                                    }
+                                                    Err(e) => {
+                                                        error!("Failed to connect to new DNS node {}: {:?}", ip, e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     handle_client(stream_key.id(), srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
                                 } else {
                                     error!("Failed to accept SRT connection");

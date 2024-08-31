@@ -83,7 +83,13 @@ pub async fn start_srt_listener(
 
                             let fwd_to_lan = request.remote().ip().is_global();
                             if fwd_to_lan {
-                                info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip())
+                                info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip());
+
+                                if let Some(lan) = &lan {
+                                    for node in lan.all() {
+                                        info!("forwarding to {}", node.ip());
+                                    }
+                                }
                             } else {
                                 info!("srt connection from {} appears local; doing nothing", request.remote().ip())
                             }

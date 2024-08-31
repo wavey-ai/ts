@@ -76,7 +76,7 @@ pub async fn start_srt_listener(
 
                             let fwd_to_dns = stream_key.is_origin();
 
-                            dbg!(&request);
+                            let fwd_to_lan = request.remote().ip().is_global();
 
                             let stream_id_str = stream_key.id().to_string();
 

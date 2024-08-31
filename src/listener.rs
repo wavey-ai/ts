@@ -83,6 +83,7 @@ pub async fn start_srt_listener(
                                 info!("srt connection from {} appears local; doing nothing", request.remote().ip())
                             }
 
+                            dbg!("here");
                             let stream_id_str = stream_key.id().to_string();
 
                             let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
@@ -94,6 +95,7 @@ pub async fn start_srt_listener(
 
                             tokio::spawn(async move {
                                 if let Ok(srt_socket) = request.accept(None).await {
+                                    dbg!("accepted on sock");
                                     if fwd_to_lan {
                                         if let Some(lan_nodes) = lan_nodes_clone {
                                             let mut rx = lan_nodes.rx();
@@ -112,6 +114,7 @@ pub async fn start_srt_listener(
                                     }
 
                                     if fwd_to_dns {
+                                        dbg!("fwd dns");
                                         if let Some(dns_nodes) = dns_nodes_clone {
                                             let mut rx = dns_nodes.rx();
                                             while let Ok(ip) = rx.recv().await {
@@ -127,6 +130,8 @@ pub async fn start_srt_listener(
                                             }
                                         }
                                     }
+
+                                    dbg!("handle_client");
 
                                     handle_client(stream_key.id(), srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
                                 } else {

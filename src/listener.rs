@@ -122,7 +122,7 @@ pub async fn start_srt_listener(
                                     if fwd_to_lan {
                                         if let Some(nodes) = lan_nodes {
                                             for node in nodes.all() {
-                                                match SrtSocket::builder().call(node.ip().to_string() + &format!(":{}", port), Some(&encoded_key)).await {
+                                                match SrtSocket::builder().call(node.addr(port), Some(&encoded_key)).await {
                                                     Ok(socket) => {
                                                         forward_lan_sockets.push(socket);
                                                         info!("Added new LAN node: {}", node.ip());
@@ -147,7 +147,7 @@ pub async fn start_srt_listener(
                                                 }
 
                                                 match SrtSocket::builder()
-                                                    .call(node.ip().to_string() + &format!(":{}", port), Some(&encoded_key))
+                                                    .call(node.addr(port), Some(&encoded_key))
                                                     .await
                                                 {
                                                     Ok(socket) => {

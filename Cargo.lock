@@ -441,8 +441,8 @@ dependencies = [
 
 [[package]]
 name = "discovery"
-version = "0.1.1"
-source = "git+https://github.com/wavey-ai/discovery.git#c9e29baaf53577063874bcbc7c13ed1afc4df47d"
+version = "0.1.2"
+source = "git+https://github.com/wavey-ai/discovery.git#c08da7e0494b7cd8c00e0d603814b3ec50306ded"
 dependencies = [
  "if-addrs",
  "rustdns",

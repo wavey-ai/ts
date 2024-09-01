@@ -92,6 +92,8 @@ pub async fn start_srt_listener(
                             } else {
                                 false
                             };
+
+                            dbg!(remote_ip.is_loopback(),  stream_key.is_origin());
                             if fwd_to_lan {
                                 info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip());
 

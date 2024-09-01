@@ -107,6 +107,7 @@ pub async fn start_srt_listener(
                             }
 
                             let stream_id = stream_key.id().to_string();
+                            let stream_key_str = stream_key.key();
 
                             let mut forward_lan_sockets: Vec<SrtSocket> = Vec::new();
                             let mut forward_dns_sockets: Vec<SrtSocket> = Vec::new();
@@ -115,12 +116,14 @@ pub async fn start_srt_listener(
                             let lan_nodes = lan.clone();
                             let dns_nodes = dns.clone();
 
+                            let encoded_key = gatekeeper.encode_key(&stream_key_str, stream_key.id()).unwrap_or("TODO".to_string());
+
                             tokio::spawn(async move {
                                 if let Ok(mut srt_socket) = request.accept(None).await {
                                     if fwd_to_lan {
                                         if let Some(nodes) = lan_nodes {
                                             for node in nodes.all() {
-                                                match SrtSocket::builder().call(node.ip().to_string() + &format!(":{}", port), Some(&stream_id)).await {
+                                                match SrtSocket::builder().call(node.ip().to_string() + &format!(":{}", port), Some(&encoded_key)).await {
                                                     Ok(socket) => {
                                                         forward_lan_sockets.push(socket);
                                                         info!("Added new LAN node: {}", node.ip());
@@ -145,7 +148,7 @@ pub async fn start_srt_listener(
                                                 }
 
                                                 match SrtSocket::builder()
-                                                    .call(node.ip().to_string() + &format!(":{}", port), Some(&stream_id))
+                                                    .call(node.ip().to_string() + &format!(":{}", port), Some(&encoded_key))
                                                     .await
                                                 {
                                                     Ok(socket) => {

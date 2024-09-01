@@ -11,11 +11,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::select;
 use tokio::sync::{oneshot, watch};
+use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info};
 
 const SRT_NEW: &str = "SRT:NEW";
 const SRT_UP: &str = "SRT:UP";
-const SRT_DOWN: &str = "SRT:DOWN";
+const SRT_FWD: &str = "SRT:FWD";
+const SRT_BYE: &str = "SRT:BYE";
 
 pub async fn start_srt_listener(
     base64_encoded_pem_key: &str,
@@ -38,7 +40,7 @@ pub async fn start_srt_listener(
 
     let gatekeeper = Gatekeeper::new(base64_encoded_pem_key)?;
 
-    let port = addr.port();
+    let port = addr.port() + 1;
 
     let srv = async move {
         match SrtListener::builder().bind(addr).await {
@@ -155,20 +157,22 @@ pub async fn start_srt_listener(
 
                                     loop {
                                         select! {
-                                            Some(packet) = srt_socket.next() => {
-                                                match packet {
-                                                    Ok(data) => {
+                                            result = timeout(Duration::from_secs(5), srt_socket.next()) => {
+                                                match result {
+                                                    Ok(Some(Ok(data))) => {
                                                         let bytes = Bytes::from(data.1);
                                                         i = i.wrapping_add(1);
                                                         if i%400 == 0 {
                                                             info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), srt_socket.settings().remote);
                                                         }
-
                                                         // Forward to LAN sockets
                                                         {
                                                             for (index, forward_socket) in forward_lan_sockets.iter_mut().enumerate() {
                                                                 if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
                                                                     error!("Error forwarding to LAN socket {}: {:?}", index, e);
+                                                                }
+                                                                if i%400 == 0 {
+                                                                    info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), forward_socket.settings().remote);
                                                                 }
                                                             }
                                                         }
@@ -187,14 +191,22 @@ pub async fn start_srt_listener(
                                                             break;
                                                         }
                                                     }
-                                                    Err(e) => {
+                                                    Ok(Some(Err(e))) => {
                                                         info!("Error receiving packet: {:?}", e);
+                                                        break;
+                                                    }
+                                                    Ok(None) => {
+                                                        info!("SRT connection closed");
+                                                        break;
+                                                    }
+                                                    Err(_) => {
+                                                        info!("Timeout reached, no packets received in the last 5 seconds, breaking the loop");
                                                         break;
                                                     }
                                                 }
                                             }
                                             _ = fin_rx.changed() => {
-                                                info!("{} id={} rejected - playlist slots full", SRT_DOWN, stream_id);
+                                                info!("{} id={} rejected - playlist slots full", SRT_BYE, stream_id);
                                                 break;
                                             }
                                             else => {

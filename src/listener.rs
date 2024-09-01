@@ -83,7 +83,7 @@ pub async fn start_srt_listener(
                                 info!("srt connection from {} has stream id; not forwarding to dns regions", request.remote().ip())
                             }
 
-                            let fwd_to_lan = !stream_key.is_origin() && (remote_ip.is_loopback() || remote_ip.is_global());
+                            let fwd_to_lan = !stream_key.is_origin() && (!remote_ip.is_loopback() || remote_ip.is_global());
                             if fwd_to_lan {
                                 info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip());
 

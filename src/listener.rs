@@ -159,7 +159,7 @@ pub async fn start_srt_listener(
                                                         }
                                                     }
                                                     Err(e) => {
-                                                        error!("Failed to connect to new DNS node {}: {:?}", node.ip(), e);
+                                                        error!("Failed to connect to new DNS node {}: {:?}", node.addr(port), e);
                                                     }
                                                 }
                                             }
@@ -261,4 +261,4 @@ pub async fn start_srt_listener(
     tokio::spawn(srv);
 
     Ok((up_rx, fin_rx, shutdown_tx))
-}
+

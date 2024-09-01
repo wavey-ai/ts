@@ -182,17 +182,13 @@ pub async fn start_srt_listener(
                                                             info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), srt_socket.settings().remote);
                                                         }
                                                         // Forward to LAN sockets
+                                                        // we can do this sequentially
                                                         {
                                                             for (index, forward_socket) in forward_lan_sockets.iter_mut().enumerate() {
-                                                                let start_time = Instant::now();
                                                                 if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
                                                                     error!("Error forwarding to LAN socket {}: {:?}", index, e);
                                                                 }
-                                                                let elapsed_time = start_time.elapsed();
-                                                                cumulative_time_lan += elapsed_time;
                                                                 if i%400 == 0 {
-                                                                     let cumulative_ms = cumulative_time_lan.as_secs_f64() * 1000.0;
-                                                                    info!("CTS LAN send: {:.4} ms", cumulative_ms);
                                                                     info!("{} key={} id={} addr={}", SRT_FWD, stream_key.key(), stream_key.id(), forward_socket.settings().remote);
                                                                 }
                                                             }
@@ -201,8 +197,16 @@ pub async fn start_srt_listener(
                                                         // Forward to DNS sockets if available
                                                         {
                                                             for (index, forward_socket) in forward_dns_sockets.iter_mut().enumerate() {
+                                                                let start_time = Instant::now();
                                                                 if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
                                                                     error!("Error forwarding to DNS socket {}: {:?}", index, e);
+                                                                }
+                                                                let elapsed_time = start_time.elapsed();
+                                                                cumulative_time_lan += elapsed_time;
+
+                                                                if i%400 == 0 {
+                                                                    let cumulative_ms = cumulative_time_lan.as_secs_f64() * 1000.0;
+                                                                    info!("CTS DNS send: {:.4} ms", cumulative_ms);
                                                                 }
                                                             }
                                                         }

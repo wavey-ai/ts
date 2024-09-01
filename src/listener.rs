@@ -40,7 +40,7 @@ pub async fn start_srt_listener(
 
     let gatekeeper = Gatekeeper::new(base64_encoded_pem_key)?;
 
-    let port = addr.port() + 1;
+    let port = addr.port();
 
     let srv = async move {
         match SrtListener::builder().bind(addr).await {

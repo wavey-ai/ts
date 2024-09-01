@@ -10,9 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::select;
-use tokio::sync::Mutex;
 use tokio::sync::{oneshot, watch};
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 const SRT_NEW: &str = "SRT:NEW";
@@ -94,60 +92,111 @@ pub async fn start_srt_listener(
                                 info!("srt connection from {} appears local; doing nothing", request.remote().ip())
                             }
 
-                            let stream_id_str = stream_key.id().to_string();
+                            let stream_id = stream_key.id().to_string();
 
-                            let forward_lan_sockets = Arc::new(Mutex::new(Vec::new()));
-                            let forward_dns_sockets = Arc::new(Mutex::new(Vec::new()));
-                            let playlists_clone = playlists.clone();
-                            let lan_nodes_clone = lan.clone();
-                            let dns_nodes_clone = dns.clone();
+                            let mut forward_lan_sockets: Vec<SrtSocket> = Vec::new();
+                            let mut forward_dns_sockets: Vec<SrtSocket> = Vec::new();
 
+                            let playlists = playlists.clone();
+                            let lan_nodes = lan.clone();
+                            let dns_nodes = dns.clone();
 
                             tokio::spawn(async move {
-                                if let Ok(srt_socket) = request.accept(None).await {
+                                if let Ok(mut srt_socket) = request.accept(None).await {
                                     if fwd_to_lan {
-                                        if let Some(lan_nodes) = lan_nodes_clone {
-                                            let stream_id = stream_id_str.clone();
-                                            let forward_lan_sockets = forward_lan_sockets.clone();
-                                            tokio::spawn(async move {
-                                                let mut rx = lan_nodes.rx();
-                                                while let Ok(ip) = rx.recv().await {
-                                                    match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id)).await {
-                                                        Ok(socket) => {
-                                                            forward_lan_sockets.lock().await.push(socket);
-                                                            info!("Added new LAN node: {}", ip);
-                                                        }
-                                                        Err(e) => {
-                                                            error!("Failed to connect to new LAN node {}: {:?}", ip, e);
-                                                        }
+                                        if let Some(nodes) = lan_nodes {
+                                            for node in nodes.all() {
+                                                match SrtSocket::builder().call(node.ip().to_string() + &format!(":{}", port), Some(&stream_id)).await {
+                                                    Ok(socket) => {
+                                                        forward_lan_sockets.push(socket);
+                                                        info!("Added new LAN node: {}", node.ip());
+                                                    }
+                                                    Err(e) => {
+                                                        error!("Failed to connect to new LAN node {}: {:?}", node.ip(), e);
                                                     }
                                                 }
-                                            });
+                                            }
                                         }
                                     }
 
                                     if fwd_to_dns {
-                                        if let Some(dns_nodes) = dns_nodes_clone {
-                                            let stream_id = stream_id_str.clone();
-                                            let forward_dns_sockets = forward_dns_sockets.clone();
-                                            tokio::spawn(async move {
-                                                let mut rx = dns_nodes.rx();
-                                                while let Ok(ip) = rx.recv().await {
-                                                    match SrtSocket::builder().call(ip.to_string() + &format!(":{}", port), Some(&stream_id)).await {
-                                                        Ok(socket) => {
-                                                            forward_dns_sockets.lock().await.push(socket);
-                                                            info!("Added new DNS node: {}", ip);
-                                                        }
-                                                        Err(e) => {
-                                                            error!("Failed to connect to new DNS node {}: {:?}", ip, e);
-                                                        }
+                                        if let Some(nodes) = dns_nodes {
+                                            for node in nodes.all() {
+                                                match SrtSocket::builder().call(node.ip().to_string() + &format!(":{}", port), Some(&stream_id)).await {
+                                                    Ok(socket) => {
+                                                        forward_dns_sockets.push(socket);
+                                                        info!("Added new DNS node: {}", node.ip());
+                                                    }
+                                                    Err(e) => {
+                                                        error!("Failed to connect to new DNS node {}: {:?}", node.ip(), e);
                                                     }
                                                 }
-                                            });
+                                            }
                                         }
                                     }
 
-                                    handle_client(stream_key.id(), srt_socket, forward_lan_sockets, forward_dns_sockets, playlists_clone, min_part_ms).await;
+                                    let (mut fin_rx, tx_demux) = new_demuxer(stream_key.id(), playlists.clone(), min_part_ms);
+
+                                    let mut i: u32 = 0;
+
+                                    loop {
+                                        select! {
+                                            Some(packet) = srt_socket.next() => {
+                                                match packet {
+                                                    Ok(data) => {
+                                                        let bytes = Bytes::from(data.1);
+                                                        let settings = srt_socket.settings();
+                                                        let default = String::from("foo");
+                                                        let key = settings.stream_id.as_ref().unwrap_or(&default);
+                                                        i = i.wrapping_add(1);
+                                                        if i%400 == 0 {
+                                                            info!("{} key={} id={} addr={}", SRT_UP, key, stream_id, settings.remote);
+                                                        }
+
+                                                        // Forward to LAN sockets
+                                                        {
+                                                            for (index, forward_socket) in forward_lan_sockets.iter_mut().enumerate() {
+                                                                if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
+                                                                    error!("Error forwarding to LAN socket {}: {:?}", index, e);
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Forward to DNS sockets if available
+                                                        {
+                                                            for (index, forward_socket) in forward_dns_sockets.iter_mut().enumerate() {
+                                                                if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
+                                                                    error!("Error forwarding to DNS socket {}: {:?}", index, e);
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if let Err(e) = tx_demux.send(bytes).await {
+                                                            error!("Error sending to demuxer: {:?}", e);
+                                                            break;
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        info!("Error receiving packet: {:?}", e);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            _ = fin_rx.changed() => {
+                                                info!("{} id={} rejected - playlist slots full", SRT_DOWN, stream_id);
+                                                break;
+                                            }
+                                            else => {
+                                                // Exit the loop when there are no more packets
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    info!("\nClient disconnected");
+                                    playlists.fin(stream_key.id());
+
+                                    info!("srt stream {} ended: shutdown complete", stream_key.id());
                                 } else {
                                     error!("Failed to accept SRT connection");
                                 }
@@ -175,78 +224,4 @@ pub async fn start_srt_listener(
     tokio::spawn(srv);
 
     Ok((up_rx, fin_rx, shutdown_tx))
-}
-
-async fn handle_client(
-    stream_id: u64,
-    mut srt_socket: SrtSocket,
-    forward_lan_sockets: Arc<Mutex<Vec<SrtSocket>>>,
-    forward_dns_sockets: Arc<Mutex<Vec<SrtSocket>>>,
-    playlists: Arc<Playlists>,
-    min_part_ms: u32,
-) {
-    let (mut fin_rx, tx_demux) = new_demuxer(stream_id, playlists.clone(), min_part_ms);
-
-    let mut i: u32 = 0;
-
-    loop {
-        select! {
-            Some(packet) = srt_socket.next() => {
-                match packet {
-                    Ok(data) => {
-                        let bytes = Bytes::from(data.1);
-                        let settings = srt_socket.settings();
-                        let default = String::from("foo");
-                        let key = settings.stream_id.as_ref().unwrap_or(&default);
-                        i = i.wrapping_add(1);
-                        if i%400 == 0 {
-                            info!("{} key={} id={} addr={}", SRT_UP, key, stream_id, settings.remote);
-                        }
-
-                        // Forward to LAN sockets
-                        {
-                            let mut lan_sockets = forward_lan_sockets.lock().await;
-                            for (index, forward_socket) in lan_sockets.iter_mut().enumerate() {
-                                if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
-                                    error!("Error forwarding to LAN socket {}: {:?}", index, e);
-                                }
-                            }
-                        }
-
-                        // Forward to DNS sockets if available
-                        {
-                            let mut dns_sockets = forward_dns_sockets.lock().await;
-                            for (index, forward_socket) in dns_sockets.iter_mut().enumerate() {
-                                if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
-                                    error!("Error forwarding to DNS socket {}: {:?}", index, e);
-                                }
-                            }
-                        }
-
-                        if let Err(e) = tx_demux.send(bytes).await {
-                            error!("Error sending to demuxer: {:?}", e);
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        info!("Error receiving packet: {:?}", e);
-                        break;
-                    }
-                }
-            }
-            _ = fin_rx.changed() => {
-                info!("{} id={} rejected - playlist slots full", SRT_DOWN, stream_id);
-                break;
-            }
-            else => {
-                // Exit the loop when there are no more packets
-                break;
-            }
-        }
-    }
-
-    info!("\nClient disconnected");
-    playlists.fin(stream_id);
-
-    info!("srt stream {} ended: shutdown complete", stream_id);
 }

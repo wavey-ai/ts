@@ -74,15 +74,16 @@ pub async fn start_srt_listener(
                                 ));
                             }
 
-                            let fwd_to_dns = stream_key.is_origin();
+                            let remote_ip = request.remote().ip();
+
+                            let fwd_to_dns = stream_key.is_origin() && !remote_ip.is_loopback();
                             if fwd_to_dns {
                                 info!("srt connection from {} is new stream key; forwarding to dns regions", request.remote().ip())
                             } else {
                                 info!("srt connection from {} has stream id; not forwarding to dns regions", request.remote().ip())
                             }
 
-                            let remote_ip = request.remote().ip();
-                            let fwd_to_lan = if remote_ip.is_loopback() || remote_ip.is_global() { true } else { false };
+                            let fwd_to_lan = remote_ip.is_loopback() || remote_ip.is_global();
                             if fwd_to_lan {
                                 info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip());
 

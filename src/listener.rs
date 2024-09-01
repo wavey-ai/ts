@@ -174,7 +174,7 @@ pub async fn start_srt_listener(
                                                                     error!("Error forwarding to LAN socket {}: {:?}", index, e);
                                                                 }
                                                                 if i%400 == 0 {
-                                                                    info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), forward_socket.settings().remote);
+                                                                    info!("{} key={} id={} addr={}", SRT_FWD, stream_key.key(), stream_key.id(), forward_socket.settings().remote);
                                                                 }
                                                             }
                                                         }

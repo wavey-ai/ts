@@ -441,8 +441,8 @@ dependencies = [
 
 [[package]]
 name = "discovery"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/discovery.git#e7cb0470514378e00f4e17c9978964a8a0ec4080"
+version = "0.1.1"
+source = "git+https://github.com/wavey-ai/discovery.git#c9e29baaf53577063874bcbc7c13ed1afc4df47d"
 dependencies = [
  "if-addrs",
  "rustdns",
@@ -1105,7 +1105,7 @@ dependencies = [
 [[package]]
 name = "mse_fmp4"
 version = "0.2.0"
-source = "git+https://github.com/wavey-ai/mse_fmp4.git#6793b9c0e5f6caa6e9af259908ca309643115c35"
+source = "git+https://github.com/wavey-ai/mse_fmp4.git#2edb9b5142ea3ff8906c595e99c7eb1dfd20c42a"
 dependencies = [
  "byteorder",
  "bytes",

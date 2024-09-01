@@ -119,13 +119,28 @@ pub async fn start_srt_listener(
                                         }
                                     }
 
+                                    let mut added_tags = std::collections::HashSet::new();
+
                                     if fwd_to_dns {
                                         if let Some(nodes) = dns_nodes {
                                             for node in nodes.all() {
-                                                match SrtSocket::builder().call(node.ip().to_string() + &format!(":{}", port), Some(&stream_id)).await {
+                                                if let Some(tag) = node.tag() {
+                                                    if added_tags.contains(tag) {
+                                                        continue;
+                                                    }
+                                                }
+
+                                                match SrtSocket::builder()
+                                                    .call(node.ip().to_string() + &format!(":{}", port), Some(&stream_id))
+                                                    .await
+                                                {
                                                     Ok(socket) => {
                                                         forward_dns_sockets.push(socket);
                                                         info!("Added new DNS node: {}", node.ip());
+
+                                                        if let Some(tag) = node.tag() {
+                                                            added_tags.insert(tag.clone());
+                                                        }
                                                     }
                                                     Err(e) => {
                                                         error!("Failed to connect to new DNS node {}: {:?}", node.ip(), e);
@@ -136,7 +151,6 @@ pub async fn start_srt_listener(
                                     }
 
                                     let (mut fin_rx, tx_demux) = new_demuxer(stream_key.id(), playlists.clone(), min_part_ms);
-
                                     let mut i: u32 = 0;
 
                                     loop {
@@ -145,12 +159,9 @@ pub async fn start_srt_listener(
                                                 match packet {
                                                     Ok(data) => {
                                                         let bytes = Bytes::from(data.1);
-                                                        let settings = srt_socket.settings();
-                                                        let default = String::from("foo");
-                                                        let key = settings.stream_id.as_ref().unwrap_or(&default);
                                                         i = i.wrapping_add(1);
                                                         if i%400 == 0 {
-                                                            info!("{} key={} id={} addr={}", SRT_UP, key, stream_id, settings.remote);
+                                                            info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), srt_socket.settings().remote);
                                                         }
 
                                                         // Forward to LAN sockets

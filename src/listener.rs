@@ -81,7 +81,8 @@ pub async fn start_srt_listener(
                                 info!("srt connection from {} has stream id; not forwarding to dns regions", request.remote().ip())
                             }
 
-                            let fwd_to_lan = request.remote().ip().is_global();
+                            let remote_ip = request.remote().ip();
+                            let fwd_to_lan = if remote_ip.is_loopback() || remote_ip.is_global() { true } else { false };
                             if fwd_to_lan {
                                 info!("srt connection from {} appears external; forwarding to local vlan", request.remote().ip());
 
@@ -216,7 +217,7 @@ pub async fn start_srt_listener(
                                         }
                                     }
 
-                                    info!("\nClient disconnected");
+                                    info!("Client disconnected stream_key={} stream_id={}", stream_key.key(), stream_key.id());
                                     playlists.fin(stream_key.id());
 
                                     info!("srt stream {} ended: shutdown complete", stream_key.id());

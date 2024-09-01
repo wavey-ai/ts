@@ -125,10 +125,10 @@ pub async fn start_srt_listener(
                                                 match SrtSocket::builder().call(node.addr(port), Some(&encoded_key)).await {
                                                     Ok(socket) => {
                                                         forward_lan_sockets.push(socket);
-                                                        info!("Added new LAN node: {}", node.ip());
+                                                        info!("Added new LAN node: {}", node.addr(port));
                                                     }
                                                     Err(e) => {
-                                                        error!("Failed to connect to new LAN node {}: {:?}", node.ip(), e);
+                                                        error!("Failed to connect to new LAN node {}: {:?}", node.addr(port), e);
                                                     }
                                                 }
                                             }
@@ -152,7 +152,7 @@ pub async fn start_srt_listener(
                                                 {
                                                     Ok(socket) => {
                                                         forward_dns_sockets.push(socket);
-                                                        info!("Added new DNS node: {}", node.ip());
+                                                        info!("Added new DNS node: {}", node.addr(port));
 
                                                         if let Some(tag) = node.tag() {
                                                             added_tags.insert(tag.clone());
@@ -261,4 +261,4 @@ pub async fn start_srt_listener(
     tokio::spawn(srv);
 
     Ok((up_rx, fin_rx, shutdown_tx))
-
+}

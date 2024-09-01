@@ -176,16 +176,23 @@ pub async fn start_srt_listener(
                                                     Ok(Some(Ok(data))) => {
                                                         let bytes = Bytes::from(data.1);
                                                         i = i.wrapping_add(1);
+                                                        let mut cumulative_time_lan = Duration::new(0, 0);
+
                                                         if i%400 == 0 {
                                                             info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), srt_socket.settings().remote);
                                                         }
                                                         // Forward to LAN sockets
                                                         {
                                                             for (index, forward_socket) in forward_lan_sockets.iter_mut().enumerate() {
+                                                                let start_time = Instant::now();
                                                                 if let Err(e) = forward_socket.send((Instant::now(), bytes.clone())).await {
                                                                     error!("Error forwarding to LAN socket {}: {:?}", index, e);
                                                                 }
+                                                                let elapsed_time = start_time.elapsed();
+                                                                cumulative_time_lan += elapsed_time;
                                                                 if i%400 == 0 {
+                                                                     let cumulative_ms = cumulative_time_lan.as_secs_f64() * 1000.0;
+                                                                    info!("CTS LAN send: {:.4} ms", cumulative_ms);
                                                                     info!("{} key={} id={} addr={}", SRT_FWD, stream_key.key(), stream_key.id(), forward_socket.settings().remote);
                                                                 }
                                                             }

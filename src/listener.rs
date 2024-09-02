@@ -15,7 +15,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info};
 
 const SRT_NEW: &str = "SRT:NEW";
-const SRT_UP: &str = "SRT:UP";
+const SRT_UP: &str = "SRT:UP ";
 const SRT_FWD: &str = "SRT:FWD";
 const SRT_BYE: &str = "SRT:BYE";
 

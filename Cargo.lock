@@ -87,9 +87,9 @@ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "async-trait"
-version = "0.1.81"
+version = "0.1.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e0c28dcc82d7c8ead5cb13beb15405b57b8546e93215673ff8ca0349a028107"
+checksum = "a27b8a3a6e1a44fa4c8baf1f653e4172e81486d4941f2237e20dc2d0cf4ddff1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -441,8 +441,8 @@ dependencies = [
 
 [[package]]
 name = "discovery"
-version = "0.1.2"
-source = "git+https://github.com/wavey-ai/discovery.git#2526cf183f3d7f29e796332d6080c5a4d8e49877"
+version = "0.1.4"
+source = "git+https://github.com/wavey-ai/discovery.git#1efdf32bc0d7562d9eea7bd834f8a262b296a3e0"
 dependencies = [
  "if-addrs",
  "rustdns",

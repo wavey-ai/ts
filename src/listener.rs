@@ -140,11 +140,18 @@ pub async fn start_srt_listener(
                                     if fwd_to_dns {
                                         if let Some(nodes) = dns_nodes {
                                             for node in nodes.all() {
+                                                if node.is_self() {
+                                                    info!("skipping dns node {}-{} for streamid {} as has own ip of {}", node.tag().unwrap(), node.seq().unwrap(), stream_id, node.ip());
+                                                    continue;
+                                                }
                                                 if let Some(tag) = node.tag() {
                                                     if added_tags.contains(tag) {
                                                         continue;
                                                     }
                                                 }
+
+                                                info!("adding dns node {}-{} with ip {} for streamid {}", node.tag().unwrap(), node.seq().unwrap(), node.ip(), stream_id);
+
 
                                                 match SrtSocket::builder()
                                                     .call(node.addr(port), Some(&encoded_key))

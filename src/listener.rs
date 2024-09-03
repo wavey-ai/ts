@@ -236,9 +236,10 @@ pub async fn start_srt_listener(
                                     let (mut fin_rx, tx_demux) = new_demuxer(stream_key.id(), playlists.clone(), min_part_ms);
                                     let mut i: u32 = 0;
 
+                                    let timeout_secs = 120;
                                     loop {
                                         select! {
-                                            result = timeout(Duration::from_secs(5), srt_socket.next()) => {
+                                            result = timeout(Duration::from_secs(timeout_secs), srt_socket.next()) => {
                                                 match result {
                                                     Ok(Some(Ok(data))) => {
                                                         let bytes = Bytes::from(data.1);
@@ -287,7 +288,7 @@ pub async fn start_srt_listener(
                                                         break;
                                                     }
                                                     Err(_) => {
-                                                        info!("Timeout reached, no packets received in the last 5 seconds, breaking the loop");
+                                                        info!("Timeout reached, no packets received in the last {} seconds, breaking the loop", timeout_secs);
                                                         break;
                                                     }
                                                 }

@@ -139,12 +139,21 @@ pub async fn start_srt_listener(
 
                                     if fwd_to_dns {
                                         if let Some(nodes) = dns_nodes {
-                                            for node in nodes.all() {
+                                            let mut own_tag = String::from("");
+                                            for node in &nodes.all() {
                                                 if node.is_self() {
-                                                    info!("skipping dns node {}-{} for streamid {} as has own ip of {}", node.tag().unwrap(), node.seq().unwrap(), stream_id, node.ip());
-                                                    continue;
+                                                    if let Some(tag) = node.tag() {
+                                                        own_tag = tag.to_string();
+                                                    }
                                                 }
+                                            }
+
+                                            for node in nodes.all() {
                                                 if let Some(tag) = node.tag() {
+                                                    if tag == &own_tag {
+                                                        info!("skipping dns node {}-{} for streamid {} as has own tag of {}", tag, node.seq().unwrap_or(0), stream_id, own_tag);
+                                                        continue;
+                                                    }
                                                     if added_tags.contains(tag) {
                                                         continue;
                                                     }

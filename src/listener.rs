@@ -19,6 +19,31 @@ const SRT_UP: &str = "SRT:UP ";
 const SRT_FWD: &str = "SRT:FWD";
 const SRT_BYE: &str = "SRT:BYE";
 
+// TODO: per-region configuration
+pub struct ReplicationTopology {
+    // min number of vlan nodes to replicate to
+    vlan_min: usize,
+    // eg 2成 - replicate to max 20% of vlan nodes (2 per decem).
+    vlan_max_ncheng: usize,
+}
+
+impl ReplicationTopology {
+    pub fn new(vlan_min: usize, vlan_max_ncheng: usize) -> Self {
+        Self {
+            vlan_min,
+            vlan_max_ncheng,
+        }
+    }
+
+    pub fn vlan_min(&self) -> usize {
+        self.vlan_min
+    }
+
+    pub fn vlan_max_ncheng(&self) -> usize {
+        self.vlan_max_ncheng
+    }
+}
+
 pub async fn start_srt_listener(
     base64_encoded_pem_key: &str,
     addr: SocketAddr,
@@ -26,6 +51,7 @@ pub async fn start_srt_listener(
     min_part_ms: u32,
     lan: Option<Arc<Nodes>>,
     dns: Option<Arc<Nodes>>,
+    topology: ReplicationTopology,
 ) -> Result<
     (
         oneshot::Receiver<()>,
@@ -55,6 +81,9 @@ pub async fn start_srt_listener(
                 }
 
                 let playlists = playlists.clone();
+
+                let vlan_min = topology.vlan_min();
+                let vlan_max_ncheng = topology.vlan_max_ncheng();
 
                 loop {
                     tokio::select! {
@@ -116,20 +145,33 @@ pub async fn start_srt_listener(
                             let dns_nodes = dns.clone();
 
                             let encoded_key = gatekeeper.encode_key(&stream_key_str, stream_key.id()).unwrap_or("TODO".to_string());
-
                             tokio::spawn(async move {
                                 if let Ok(mut srt_socket) = request.accept(None).await {
+
+                                    let mut n_lan = 0;
+                                    // mirror to all nodes on the vlan upto default replication
+                                    // limit - this is so we don't exhaust all available playlist slots.
                                     if fwd_to_lan {
                                         if let Some(nodes) = lan_nodes {
-                                            for node in nodes.all() {
+                                            let nodes = nodes.all();
+                                            let max_lan = (nodes.len() * vlan_max_ncheng) / 10;
+                                            for node in &nodes {
                                                 match SrtSocket::builder().call(node.addr(port), Some(&encoded_key)).await {
                                                     Ok(socket) => {
                                                         forward_lan_sockets.push(socket);
+                                                        n_lan += 1;
                                                         info!("Added new LAN node: {}", node.addr(port));
                                                     }
                                                     Err(e) => {
+                                                        // this is possibly because the node has no
+                                                        // available playlist slots, in which case
+                                                        // we will try another.
                                                         error!("Failed to connect to new LAN node {}: {:?}", node.addr(port), e);
                                                     }
+                                                }
+
+                                                if n_lan >= max_lan && n_lan >= vlan_min {
+                                                    break;
                                                 }
                                             }
                                         }
@@ -137,6 +179,7 @@ pub async fn start_srt_listener(
 
                                     let mut added_tags = std::collections::HashSet::new();
 
+                                    // forward every stream once to one node in each global region.
                                     if fwd_to_dns {
                                         if let Some(nodes) = dns_nodes {
                                             let mut own_tag = String::from("");

@@ -5,6 +5,7 @@ use bytes::Bytes;
 use discovery::Nodes;
 use futures::{SinkExt, StreamExt};
 use srt_tokio::{SrtListener, SrtSocket};
+use std::collections::HashSet;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -177,7 +178,7 @@ pub async fn start_srt_listener(
                                         }
                                     }
 
-                                    let mut added_tags = std::collections::HashSet::new();
+                                    let mut added_tags = HashSet::new();
 
                                     // forward every stream once to one node in each global region.
                                     if fwd_to_dns {
@@ -221,6 +222,13 @@ pub async fn start_srt_listener(
                                                         error!("Failed to connect to new DNS node {}: {:?}", node.addr(port), e);
                                                     }
                                                 }
+                                            }
+
+                                            let all_tags: HashSet<String> = nodes.all().iter().filter_map(|node| node.tag().cloned()).collect();
+                                            let missing_tags: HashSet<_> = all_tags.difference(&added_tags).collect();
+
+                                            if !missing_tags.is_empty() {
+                                                error!("Failed to fwd to regions {:?} this will cause a loss of service stream_id={}", missing_tags, stream_id);
                                             }
                                         }
                                     }

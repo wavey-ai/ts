@@ -7,7 +7,7 @@ use futures::{SinkExt, StreamExt};
 use srt_tokio::{SrtListener, SrtSocket};
 use std::collections::HashSet;
 use std::error::Error;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::select;
@@ -117,8 +117,8 @@ pub async fn start_srt_listener(
                                 true
                             } else if remote_ip.is_loopback() {
                                 false
-                            } else if remote_ip.is_global() {
-                                true
+                            } else if let IpAddr::V4(ipv4) = remote_ip {
+                                crate::ip::is_global(&ipv4)
                             } else {
                                 false
                             };

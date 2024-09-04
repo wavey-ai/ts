@@ -1,8 +1,10 @@
-#![feature(ip)]
 use bytes::Bytes;
 
 #[macro_use]
 extern crate mpeg2ts_reader;
+
+pub mod ip;
+
 // SRT listener
 pub mod listener;
 // fmp4 boxing

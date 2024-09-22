@@ -1,8 +1,15 @@
-use crate::boxer::ticks_to_ms;
 use crate::AccessUnit;
 use std::sync::Arc;
 
 use tracing::{debug, error};
+
+pub fn ticks_to_ms(ticks: u64) -> u64 {
+    // Convert ticks to seconds as f64
+    let seconds = ticks as f64 / 90000.0;
+
+    // Convert seconds to milliseconds
+    (seconds * 1000.0) as u64
+}
 
 pub struct AccessUnitAccumulator {
     min_part_ms: u32,

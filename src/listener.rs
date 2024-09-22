@@ -247,6 +247,7 @@ pub async fn start_srt_listener(
 
                                                         if i%400 == 0 {
                                                             info!("{} key={} id={} addr={}", SRT_UP, stream_key.key(), stream_key.id(), srt_socket.settings().remote);
+                                                            dbg!(&srt_socket);
                                                         }
 
                                                         // Forward to LAN sockets if available

@@ -28,3 +28,5 @@ rustls = { version = "0.21.0" }
 hmac = "0.12.1"
 sha2 = "0.10.8"
 base64 = "0.22.1"
+access-unit = { path = "../access-unit" }
+boxer = { path = "../boxer" }

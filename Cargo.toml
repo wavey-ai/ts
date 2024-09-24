@@ -9,7 +9,6 @@ bytes = "1.6.0"
 futures = "0.3.30"
 h264 = { git = "https://github.com/wavey-ai/av-rs.git" }
 xmpegts = { git = "https://github.com/wavey-ai/xiu" }
-mse_fmp4 = { git = "https://github.com/wavey-ai/mse_fmp4.git" }
 tokio-stream = "0.1.15"
 tokio = { version = "1.37.0", features = ["full"] }
 byteorder = "1.5.0"

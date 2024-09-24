@@ -1,6 +1,5 @@
 use access_unit::AccessUnit;
 use bytes::Bytes;
-use h264::{Bitstream, Decode, NALUnit, SequenceParameterSet};
 use mpeg2ts_reader::packet;
 use mpeg2ts_reader::pes;
 use mpeg2ts_reader::psi;
@@ -8,7 +7,6 @@ use mpeg2ts_reader::{
     demultiplex::{self, FilterChangeset},
     StreamType,
 };
-use mse_fmp4::avc::AvcDecoderConfigurationRecord;
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
@@ -128,7 +126,6 @@ struct PtsDumpElementaryStreamConsumer {
     height: u16,
     fps: f64,
     is_keyframe: bool,
-    avcc: Option<AvcDecoderConfigurationRecord>,
     lp_nalus: Vec<u8>,
     output_tx: mpsc::Sender<AccessUnit>,
 }
@@ -153,7 +150,6 @@ impl PtsDumpElementaryStreamConsumer {
             width: 0,
             height: 0,
             fps: 0.0,
-            avcc: None,
             is_keyframe: false,
             lp_nalus: Vec::new(),
             output_tx,
@@ -247,8 +243,22 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                     }
 
                     match nalu_type {
-                        1 | 5 => {
+                        1 => {
                             let mut buffer = [0u8; 4];
+                            buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
+                            self.lp_nalus.extend_from_slice(&buffer);
+                            self.lp_nalus.extend_from_slice(nalu);
+                        }
+                        5 => {
+                            let mut buffer = [0u8; 4];
+                            if let (Some(sps_b), Some(pps_b)) = (&self.sps, &self.pps) {
+                                buffer.copy_from_slice(&(sps_b.len() as u32).to_be_bytes());
+                                self.lp_nalus.extend_from_slice(&buffer);
+                                self.lp_nalus.extend_from_slice(sps_b);
+                                buffer.copy_from_slice(&(pps_b.len() as u32).to_be_bytes());
+                                self.lp_nalus.extend_from_slice(&buffer);
+                                self.lp_nalus.extend_from_slice(pps_b);
+                            }
                             buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
                             self.lp_nalus.extend_from_slice(&buffer);
                             self.lp_nalus.extend_from_slice(nalu);
@@ -262,38 +272,6 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
 
                 if self.new_access_unit && !self.lp_nalus.is_empty() {
                     self.new_access_unit = false;
-                    if self.avcc.is_none() {
-                        if let (Some(sps_b), Some(pps_b)) = (&self.sps, &self.pps) {
-                            let bs = Bitstream::new(sps_b.iter().copied());
-                            if let Ok(mut nalu) = NALUnit::decode(bs) {
-                                let mut rbsp = Bitstream::new(&mut nalu.rbsp_byte);
-                                if let Ok(sps) = SequenceParameterSet::decode(&mut rbsp) {
-                                    self.width = (sps.pic_width_in_samples()
-                                        - (sps.frame_crop_right_offset.0 * 2)
-                                        - (sps.frame_crop_left_offset.0 * 2))
-                                        as u16;
-                                    self.height = ((sps.frame_height_in_mbs() * 16)
-                                        - (sps.frame_crop_bottom_offset.0 * 2)
-                                        - (sps.frame_crop_top_offset.0 * 2))
-                                        as u16;
-                                    if sps.vui_parameters_present_flag.0 != 0
-                                        && sps.vui_parameters.timing_info_present_flag.0 != 0
-                                    {
-                                        self.fps = sps.vui_parameters.time_scale.0 as f64
-                                            / sps.vui_parameters.num_units_in_tick.0 as f64;
-                                    }
-
-                                    self.avcc = Some(AvcDecoderConfigurationRecord {
-                                        profile_idc: sps.profile_idc.0,
-                                        constraint_set_flag: sps.constraint_set0_flag.0,
-                                        level_idc: sps.level_idc.0,
-                                        sequence_parameter_set: sps_b.clone(),
-                                        picture_parameter_set: pps_b.clone(),
-                                    })
-                                }
-                            }
-                        }
-                    }
 
                     let au = AccessUnit {
                         avc: true,

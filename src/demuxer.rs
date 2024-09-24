@@ -235,6 +235,9 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                             buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
                             self.lp_nalus.extend_from_slice(&buffer);
                             self.lp_nalus.extend_from_slice(nalu);
+                            if nalu_type == 5 {
+                                self.is_keyframe = true;
+                            }
                         }
                         9 => {
                             self.new_access_unit = true;

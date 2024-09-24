@@ -230,26 +230,11 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                                 self.pps = Some(Bytes::copy_from_slice(nalu));
                             }
                         }
-                        1 => {
+                        1 | 5 => {
                             let mut buffer = [0u8; 4];
                             buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
                             self.lp_nalus.extend_from_slice(&buffer);
                             self.lp_nalus.extend_from_slice(nalu);
-                        }
-                        5 => {
-                            let mut buffer = [0u8; 4];
-                            if let (Some(sps_b), Some(pps_b)) = (&self.sps, &self.pps) {
-                                buffer.copy_from_slice(&(sps_b.len() as u32).to_be_bytes());
-                                self.lp_nalus.extend_from_slice(&buffer);
-                                self.lp_nalus.extend_from_slice(sps_b);
-                                buffer.copy_from_slice(&(pps_b.len() as u32).to_be_bytes());
-                                self.lp_nalus.extend_from_slice(&buffer);
-                                self.lp_nalus.extend_from_slice(pps_b);
-                            }
-                            buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
-                            self.lp_nalus.extend_from_slice(&buffer);
-                            self.lp_nalus.extend_from_slice(nalu);
-                            self.is_keyframe = true;
                         }
                         9 => {
                             self.new_access_unit = true;
@@ -270,6 +255,25 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                     };
 
                     self.send_access_unit(au);
+
+                    if self.is_keyframe {
+                        let mut buffer = [0u8; 4];
+                        if let (Some(sps_b), Some(pps_b)) = (&self.sps, &self.pps) {
+                            buffer.copy_from_slice(&(sps_b.len() as u32).to_be_bytes());
+                            self.lp_nalus.extend_from_slice(sps_b);
+                            buffer.copy_from_slice(&(pps_b.len() as u32).to_be_bytes());
+                            self.lp_nalus.extend_from_slice(&buffer);
+                            self.lp_nalus.extend_from_slice(pps_b);
+                            let au = AccessUnit {
+                                avc: true,
+                                key: false,
+                                data: Bytes::from(std::mem::take(&mut self.lp_nalus)),
+                                pts: 0,
+                                dts: 0,
+                            };
+                            self.send_access_unit(au);
+                        }
+                    }
                     self.is_keyframe = false;
                 }
             }

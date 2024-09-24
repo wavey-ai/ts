@@ -260,9 +260,10 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                     self.send_access_unit(au);
 
                     if self.is_keyframe {
-                        let mut buffer = [0u8; 4];
                         if let (Some(sps_b), Some(pps_b)) = (&self.sps, &self.pps) {
+                            let mut buffer = [0u8; 4];
                             buffer.copy_from_slice(&(sps_b.len() as u32).to_be_bytes());
+                            self.lp_nalus.extend_from_slice(&buffer);
                             self.lp_nalus.extend_from_slice(sps_b);
                             buffer.copy_from_slice(&(pps_b.len() as u32).to_be_bytes());
                             self.lp_nalus.extend_from_slice(&buffer);

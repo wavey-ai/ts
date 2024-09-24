@@ -15,11 +15,10 @@ use tracing::{debug, error, warn};
 pub struct TsDemuxer;
 
 impl TsDemuxer {
-    pub fn start() -> (mpsc::Sender<Bytes>, mpsc::Receiver<AccessUnit>) {
+    pub fn start(tx: mpsc::Sender<AccessUnit>) -> mpsc::Sender<Bytes> {
         let (input_tx, input_rx) = mpsc::channel::<Bytes>(32);
-        let (output_tx, output_rx) = mpsc::channel::<AccessUnit>(32);
 
-        let mut context = DemuxContext::new(output_tx);
+        let mut context = DemuxContext::new(tx);
         let mut demux = demultiplex::Demultiplex::new(&mut context);
 
         tokio::spawn(async move {
@@ -30,7 +29,7 @@ impl TsDemuxer {
             debug!("Input channel closed, shutting down demuxer");
         });
 
-        (input_tx, output_rx)
+        input_tx
     }
 }
 

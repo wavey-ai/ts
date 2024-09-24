@@ -122,9 +122,6 @@ struct PtsDumpElementaryStreamConsumer {
     dts: u64,
     pps: Option<Bytes>,
     sps: Option<Bytes>,
-    width: u16,
-    height: u16,
-    fps: f64,
     is_keyframe: bool,
     lp_nalus: Vec<u8>,
     output_tx: mpsc::Sender<AccessUnit>,
@@ -147,9 +144,6 @@ impl PtsDumpElementaryStreamConsumer {
             dts: 0,
             sps: None,
             pps: None,
-            width: 0,
-            height: 0,
-            fps: 0.0,
             is_keyframe: false,
             lp_nalus: Vec::new(),
             output_tx,
@@ -236,13 +230,6 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                                 self.pps = Some(Bytes::copy_from_slice(nalu));
                             }
                         }
-                        5 => {
-                            self.is_keyframe = true;
-                        }
-                        _ => {}
-                    }
-
-                    match nalu_type {
                         1 => {
                             let mut buffer = [0u8; 4];
                             buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
@@ -262,6 +249,7 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                             buffer.copy_from_slice(&(nalu.len() as u32).to_be_bytes());
                             self.lp_nalus.extend_from_slice(&buffer);
                             self.lp_nalus.extend_from_slice(nalu);
+                            self.is_keyframe = true;
                         }
                         9 => {
                             self.new_access_unit = true;
@@ -298,6 +286,8 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
             }
             _ => {}
         }
+
+        self.accumulated_payload.clear();
     }
 
     fn continuity_error(&mut self, _ctx: &mut DemuxContext) {}

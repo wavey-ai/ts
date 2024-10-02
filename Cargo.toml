@@ -28,3 +28,4 @@ hmac = "0.12.1"
 sha2 = "0.10.8"
 base64 = "0.22.1"
 access-unit = { git = "https://github.com/wavey-ai/access-unit.git" }
+soundkit = "0.11.8"

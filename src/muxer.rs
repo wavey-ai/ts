@@ -29,8 +29,8 @@ pub async fn mux_stream(
             // TODO: Bytes to BytesMut :(
             false => match ts_muxer.write(
                 audio_pid,
-                au.dts as i64 * 90,
-                au.dts as i64 * 90,
+                au.dts as i64,
+                au.dts as i64,
                 flags,
                 BytesMut::from_iter(au.data),
             ) {

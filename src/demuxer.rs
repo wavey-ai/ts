@@ -256,6 +256,7 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                         data: Bytes::from(std::mem::take(&mut self.lp_nalus)),
                         pts: self.pts,
                         dts: self.dts,
+                        id: 0,
                     };
 
                     self.send_access_unit(au);
@@ -275,6 +276,7 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                                 data: Bytes::from(std::mem::take(&mut self.lp_nalus)),
                                 pts: 0,
                                 dts: 0,
+                                id: 0,
                             };
                             self.send_access_unit(au);
                         }
@@ -287,7 +289,8 @@ impl pes::ElementaryStreamConsumer<DemuxContext> for PtsDumpElementaryStreamCons
                     avc: false,
                     key: false,
                     pts: self.pts,
-                    dts: self.dts,
+                    dts: self.pts,
+                    id: self.dts,
                     data: Bytes::from(std::mem::take(&mut self.accumulated_payload)),
                 };
 
